@@ -52,12 +52,8 @@ export function Landing() {
 			</aside>
 
 			<main className="landing-main">
-				<h1>A Typst editor where comments stay put</h1>
-				<p>
-					Open a Typst project from GitHub, edit it together in real time, and comment on any
-					passage. Each comment stays with the words it was about, even after someone rewrites them.
-					Commit back to the repo when you are done.
-				</p>
+				<h1>A simple, free Typst editor for annotating with mates</h1>
+				<p>Edit a Typst project from GitHub together, comment on it, and commit back.</p>
 				<a className="btn primary landing-cta" href="/auth/login">
 					<GithubMark size={16} />
 					Sign in with GitHub
