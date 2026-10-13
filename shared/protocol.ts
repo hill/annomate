@@ -1,4 +1,5 @@
 import type { Anchor } from "./anchor";
+import type { ProjectFormat } from "./formats";
 
 export interface User {
 	id: number;
@@ -31,6 +32,7 @@ export interface Thread {
 export interface GitState {
 	repo: string;
 	branch: string;
+	format: ProjectFormat;
 	mainFile: string;
 	baseSha: string;
 	busy: "pull" | "commit" | null;
@@ -82,11 +84,29 @@ export const TEXT_EXTENSIONS = [
 	".json",
 	".txt",
 	".md",
+	".markdown",
 	".tex",
 	".xml",
 	".svg",
 	".csl",
+	// LaTeX classes, packages, bibliography styles and their configuration.
+	".sty",
+	".cls",
+	".bst",
+	".bbx",
+	".cbx",
+	".def",
+	".cfg",
+	".ltx",
 ];
 
-export const isTextPath = (path: string) =>
-	TEXT_EXTENSIONS.some((ext) => path.toLowerCase().endsWith(ext));
+/** Text files known by name rather than extension. */
+const TEXT_NAMES = ["latexmkrc", ".latexmkrc"];
+
+export const isTextPath = (path: string) => {
+	const lower = path.toLowerCase();
+	return (
+		TEXT_EXTENSIONS.some((ext) => lower.endsWith(ext)) ||
+		TEXT_NAMES.includes(lower.split("/").pop() ?? "")
+	);
+};

@@ -1,5 +1,6 @@
 import { LayoutGrid, Plus } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
+import { FORMATS, type ProjectFormat } from "../../shared/formats";
 import type { User } from "../../shared/protocol";
 import { ApiError, ago, api, type Project, type Repo } from "../api";
 import { navigate } from "../router";
@@ -140,6 +141,7 @@ function NewProject({ onClose }: { onClose(): void }) {
 	const [repo, setRepo] = useState("");
 	const [branch, setBranch] = useState("");
 	const [mainFile, setMainFile] = useState("");
+	const [format, setFormat] = useState<ProjectFormat | null>(null);
 	const [busy, setBusy] = useState(false);
 	const [error, setError] = useState("");
 
@@ -152,7 +154,12 @@ function NewProject({ onClose }: { onClose(): void }) {
 		setBusy(true);
 		setError("");
 		try {
-			const project = await api.createProject({ repo: repo.trim(), branch, mainFile });
+			const project = await api.createProject({
+				repo: repo.trim(),
+				branch,
+				mainFile,
+				format: format ?? undefined,
+			});
 			navigate(`/p/${project.id}`);
 		} catch (err) {
 			setError(err instanceof Error ? err.message : String(err));
@@ -215,6 +222,24 @@ function NewProject({ onClose }: { onClose(): void }) {
 						onChange={(e) => setBranch(e.target.value)}
 						spellCheck={false}
 					/>
+				</div>
+				<div className="form-row">
+					<span className="label" id="np-format">
+						Format
+					</span>
+					<div className="seg format-choice" role="tablist" aria-labelledby="np-format">
+						{([null, "typst", "latex", "markdown"] as const).map((f) => (
+							<button
+								key={f ?? "detect"}
+								type="button"
+								role="tab"
+								aria-selected={format === f}
+								onClick={() => setFormat(f)}
+							>
+								{f ? FORMATS[f].label : "Detect"}
+							</button>
+						))}
+					</div>
 				</div>
 				<div className="form-row">
 					<label className="label" htmlFor="np-main">

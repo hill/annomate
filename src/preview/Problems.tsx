@@ -1,6 +1,6 @@
 import { ArrowRight, CircleAlert, TriangleAlert } from "lucide-react";
 import { Drawer } from "../ui/Drawer";
-import type { Diagnostic } from "./typst.worker";
+import type { Diagnostic } from "./types";
 
 interface Span {
 	line: number;
@@ -9,15 +9,9 @@ interface Span {
 	endCol: number;
 }
 
-/** Typst reports zero-based `line:col-line:col`, or sometimes just a line. */
-export function parseRange(range: string): Span | null {
-	const full = range.match(/^(\d+):(\d+)-(\d+):(\d+)/);
-	if (full) {
-		const [line, col, endLine, endCol] = full.slice(1).map(Number);
-		return { line, col, endLine, endCol };
-	}
-	const line = range.match(/^(\d+)/);
-	return line ? { line: Number(line[1]), col: 0, endLine: Number(line[1]), endCol: 0 } : null;
+function spanOf(d: Diagnostic): Span | null {
+	if (d.line === null) return null;
+	return { line: d.line, col: d.column, endLine: d.endLine ?? d.line, endCol: d.endColumn };
 }
 
 const CONTEXT = 16;
@@ -68,7 +62,7 @@ export function Problems({ diagnostics, source, mainFile, onOpen, onClose }: Pro
 			<div className="problems">
 				{sorted.map((d, i) => {
 					const path = d.path || mainFile;
-					const span = parseRange(d.range);
+					const span = spanOf(d);
 					const line = span ? span.line + 1 : 1;
 					const code = excerpt(source(path), span);
 					const error = d.severity === "error";

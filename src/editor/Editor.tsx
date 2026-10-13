@@ -32,16 +32,16 @@ import {
 	type ViewUpdate,
 	WidgetType,
 } from "@codemirror/view";
-import { typst_lezer } from "codemirror-lang-typst/lezer";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { yCollab } from "y-codemirror.next";
 import * as Y from "yjs";
 import { isPoint, resolveAnchor } from "../../shared/anchor";
+import { formatOf } from "../../shared/formats";
 import type { Thread, User } from "../../shared/protocol";
 import type { Room } from "../room/provider";
+import { editorLanguage } from "./languages";
 import { DRAG_TYPE, references } from "./references";
 import { highlighting } from "./theme";
-import { typstHover } from "./typstDocs";
 
 export interface EditorHandle {
 	reveal(pos: number): void;
@@ -53,6 +53,8 @@ export interface EditorHandle {
 interface Props {
 	room: Room;
 	path: string;
+	/** The project's main file. LaTeX resolves the paths it inserts against its folder. */
+	mainFile?: string;
 	threads: Thread[];
 	activeThread: string | null;
 	/** Where a comment on a point is being written, shown as a pin with your avatar. */
@@ -66,7 +68,7 @@ interface Props {
 	onImages?(files: File[], at: number, code: boolean): Promise<{ from: number; to: number } | null>;
 }
 
-// The raster and vector formats Typst's image function reads.
+// The image formats Typst, LaTeX and Markdown previews all display.
 const IMAGE_TYPE = /^image\/(png|jpeg|gif|webp|svg\+xml)$/;
 
 const imagesIn = (dt: DataTransfer | null) =>
@@ -290,6 +292,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
 	{
 		room,
 		path,
+		mainFile,
 		threads,
 		activeThread,
 		draftPoint,
@@ -303,8 +306,8 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
 ) {
 	const host = useRef<HTMLDivElement>(null);
 	const view = useRef<EditorView | null>(null);
-	const callbacks = useRef({ onSelectThread, onComment, onCursor, onImages });
-	callbacks.current = { onSelectThread, onComment, onCursor, onImages };
+	const callbacks = useRef({ onSelectThread, onComment, onCursor, onImages, mainFile });
+	callbacks.current = { onSelectThread, onComment, onCursor, onImages, mainFile };
 	const comments = useRef<CommentState>({ threads, active: activeThread });
 	comments.current = { threads, active: activeThread };
 
@@ -319,7 +322,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
 				if (r && view.current === v) v.dispatch({ selection: { anchor: r.to } });
 			});
 		};
-		const images = path.endsWith(".typ")
+		const images = formatOf(path)
 			? [
 					dropCursor(),
 					EditorView.domEventHandlers({
@@ -338,7 +341,12 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
 								if (!room.files.has(dragged) && !room.assets.has(dragged)) return true;
 								const at =
 									v.posAtCoords({ x: e.clientX, y: e.clientY }) ?? v.state.selection.main.head;
-								const insert = references(path, [dragged], inCode(v.state, at));
+								const insert = references(
+									path,
+									[dragged],
+									inCode(v.state, at),
+									callbacks.current.mainFile,
+								);
 								v.dispatch({
 									changes: { from: at, insert },
 									selection: { anchor: at + insert.length },
@@ -380,7 +388,7 @@ export const Editor = forwardRef<EditorHandle, Props>(function Editor(
 				highlightActiveLine(),
 				highlightSelectionMatches(),
 				EditorView.lineWrapping,
-				path.endsWith(".typ") ? [typst_lezer(), typstHover] : [],
+				editorLanguage(path),
 				highlighting,
 				commentState,
 				draftPin,

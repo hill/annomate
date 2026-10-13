@@ -6,6 +6,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import { applyMinimalDiff, livePositions, merge3, reattach, resolveAnchor } from "../shared/anchor";
 import { buildReport, type Report, type ReportOptions } from "../shared/commentReport";
+import type { ProjectFormat } from "../shared/formats";
 import {
 	type ClientMessage,
 	type Comment,
@@ -24,6 +25,8 @@ export interface ProjectConfig {
 	id: string;
 	repo: string;
 	branch: string;
+	/** Absent in configs stored before projects had a format, which were all Typst. */
+	format?: ProjectFormat;
 	mainFile: string;
 }
 
@@ -128,10 +131,11 @@ export class ProjectRoom extends DurableObject<Env> {
 	}
 
 	private gitState(): GitState {
-		const { repo, branch, mainFile } = this.config;
+		const { repo, branch, format = "typst", mainFile } = this.config;
 		return {
 			repo,
 			branch,
+			format,
 			mainFile,
 			baseSha: this.meta("base_sha") ?? "",
 			busy: this.busy,

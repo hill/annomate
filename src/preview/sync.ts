@@ -65,10 +65,11 @@ export class TextIndex {
 	/**
 	 * @param stage the element the rects are measured against
 	 * @param scale CSS pixels per point at the time of measuring
+	 * @param selector the renderer's selectable text runs
 	 */
-	constructor(root: Element, stage: Element, scale: number) {
+	constructor(root: Element, stage: Element, scale: number, selector: string) {
 		const origin = stage.getBoundingClientRect();
-		for (const el of root.querySelectorAll(".tsel")) {
+		for (const el of root.querySelectorAll(selector)) {
 			const box = (el.parentElement ?? el).getBoundingClientRect();
 			const words = (el.textContent ?? "").toLowerCase().match(WORD) ?? [];
 			if (!words.length) continue;

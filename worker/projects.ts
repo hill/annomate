@@ -1,3 +1,4 @@
+import type { ProjectFormat } from "../shared/formats";
 import type { Env } from "./env";
 import type { ProjectConfig } from "./room";
 
@@ -6,6 +7,7 @@ export interface ProjectRow {
 	owner_id: number;
 	repo: string;
 	branch: string;
+	format: ProjectFormat;
 	main_file: string;
 	icon: string | null;
 	created_at: number;
@@ -16,7 +18,7 @@ export type MemberProject = ProjectRow & { role: "owner" | "editor" };
 
 // Every column but the thumbnail bytes, which only the thumbnail route reads.
 export const PROJECT_COLUMNS =
-	"p.id, p.owner_id, p.repo, p.branch, p.main_file, p.icon, p.created_at, p.thumb_at";
+	"p.id, p.owner_id, p.repo, p.branch, p.format, p.main_file, p.icon, p.created_at, p.thumb_at";
 
 export async function membership(env: Env, projectId: string, login: string) {
 	return env.DB.prepare(
@@ -41,6 +43,7 @@ export const roomConfig = (project: ProjectRow): ProjectConfig => ({
 	id: project.id,
 	repo: project.repo,
 	branch: project.branch,
+	format: project.format,
 	mainFile: project.main_file,
 });
 

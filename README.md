@@ -1,15 +1,23 @@
 # annomate
 
-Collaborative review for Typst projects that live on GitHub. Edit together in real time, comment on the source, and commit back to the repo. Comments keep their place when the text changes, even when the change was pushed from somewhere else.
+Collaborative review for Typst and Markdown projects that live on GitHub. Edit together in real time, comment on the source, and commit back to the repo. Comments keep their place when the text changes, even when the change was pushed from somewhere else.
 
 ## What it does
 
 - Live co-editing with each other's cursors, mouse pointers and a follow mode.
-- A Typst preview that compiles in the browser, with pinch zoom, PDF export and click-to-sync between source and page.
+- A preview that compiles in the browser, with pinch zoom, PDF export and click-to-sync between source and page.
 - Comment threads that survive edits, moves and outside pushes. A comment whose text changed shows a word diff against the original.
 - Commit and pull from the app, with a diff of what you are about to push and a graph of the repo's history.
 - A file tree with folders, drag and drop, and uploads for images and fonts.
 - Coding agents can read and answer comments over MCP.
+
+## Formats
+
+A new project detects its format from the repo, preferring Typst, then LaTeX, then Markdown. `shared/formats.ts` holds the rules.
+
+Markdown is typeset through Typst with the [cmarker](https://typst.app/universe/package/cmarker) package and mitex for maths, so it gets the same preview, sync and PDF export. To restyle it, add an `annomate.typ` at the repo root that defines `#let template(body) = …`. A missing image shows as a marked gap rather than stopping the document.
+
+LaTeX projects are detected and editable, with highlighting. Their preview is not built yet.
 
 ## How comments stay put
 
@@ -44,10 +52,11 @@ The `/auth/dev` route skips GitHub sign-in. It only answers on localhost with `D
 ## Tests
 
 - `just test` runs the unit tests.
-- `E2E_REPO=owner/name just e2e` runs the browser tests that only read the repo.
+- `E2E_REPO=owner/name just e2e` runs the browser tests that only read the repo. `E2E_MD_REPO` does the same for a Markdown repo.
 - Add `E2E_SANDBOX=owner/name` to include the tests that commit. They push to that repo, so point it at a scratch one.
 
 ## Limits
 
 - Pull is manual. A GitHub push webhook could trigger it.
+- LaTeX has no preview yet.
 - Projects using a Typst 0.15 feature will not compile until typst.ts ships a 0.15 build.

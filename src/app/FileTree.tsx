@@ -12,6 +12,7 @@ import {
 	Trash2,
 } from "lucide-react";
 import { type DragEvent, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { formatOf } from "../../shared/formats";
 import type { Presence } from "../../shared/protocol";
 import { DRAG_TYPE } from "../editor/references";
 
@@ -68,7 +69,7 @@ function buildTree(text: string[], binary: string[]): TreeNode[] {
 
 function iconFor(path: string, binary?: boolean) {
 	if (/\.(png|jpe?g|gif|webp|svg)$/i.test(path)) return <FileImage size={14} />;
-	if (path.endsWith(".typ")) return <FileText size={14} />;
+	if (formatOf(path)) return <FileText size={14} />;
 	if (/\.(json|ya?ml|toml)$/i.test(path)) return <FileJson size={14} />;
 	if (/\.(bib|csv|csl|xml)$/i.test(path)) return <FileCode2 size={14} />;
 	return <File size={14} style={binary ? { opacity: 0.6 } : undefined} />;
@@ -142,7 +143,7 @@ export function FileTree({
 	const [dragging, setDragging] = useState<string | null>(null);
 	const openTimer = useRef<{ path: string; timer: number } | null>(null);
 
-	// Folders without Typst source (figures, data, fonts) start collapsed, once the files arrive.
+	// Folders without document source (figures, data, fonts) start collapsed, once the files arrive.
 	const seeded = useRef(false);
 	useEffect(() => {
 		if (seeded.current || !files.length) return;
@@ -152,8 +153,8 @@ export function FileTree({
 			const parts = p.split("/");
 			for (let i = 1; i < parts.length; i++) folders.add(parts.slice(0, i).join("/"));
 		}
-		const typst = files.filter((p) => p.endsWith(".typ"));
-		setClosed(new Set([...folders].filter((f) => !typst.some((p) => p.startsWith(`${f}/`)))));
+		const sources = files.filter((p) => formatOf(p));
+		setClosed(new Set([...folders].filter((f) => !sources.some((p) => p.startsWith(`${f}/`)))));
 	}, [files, assets]);
 
 	const setOpen = (path: string, open: boolean) =>

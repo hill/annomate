@@ -1,9 +1,11 @@
+import type { ProjectFormat } from "../shared/formats";
 import type { User } from "../shared/protocol";
 
 export interface Project {
 	id: string;
 	repo: string;
 	branch: string;
+	format: ProjectFormat;
 	mainFile: string;
 	/** Custom icon as a data URL, or null for the generated one. */
 	icon: string | null;
@@ -87,8 +89,12 @@ export const api = {
 	repos: () => call<Repo[]>("/api/repos"),
 	projects: () => call<Project[]>("/api/projects"),
 	project: (id: string) => call<Project & { members: Member[] }>(`/api/projects/${id}`),
-	createProject: (body: { repo: string; branch?: string; mainFile?: string }) =>
-		call<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
+	createProject: (body: {
+		repo: string;
+		branch?: string;
+		mainFile?: string;
+		format?: ProjectFormat;
+	}) => call<Project>("/api/projects", { method: "POST", body: JSON.stringify(body) }),
 	history: (id: string) => call<History>(`/api/projects/${id}/history`),
 	agents: () => call<AgentConnection[]>("/api/agents"),
 	disconnectAgent: (id: string) =>

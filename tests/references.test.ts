@@ -25,3 +25,25 @@ describe("references", () => {
 		expect(references("main.typ", ["a.png", "b.png"], true)).toBe('image("a.png"), image("b.png")');
 	});
 });
+
+describe("references in Markdown", () => {
+	test("images and links, relative to the file", () => {
+		expect(references("README.md", ["img/a.png"])).toBe("![](img/a.png)");
+		expect(references("docs/guide.md", ["img/a b.png"])).toBe("![](../img/a%20b.png)");
+		expect(references("docs/guide.md", ["docs/other.md"])).toBe("[other.md](other.md)");
+	});
+});
+
+describe("references in LaTeX", () => {
+	test("relative to the main file's folder, whichever file they go in", () => {
+		expect(references("chapters/one.tex", ["figures/a.pdf"], false, "main.tex")).toBe(
+			"\\includegraphics{figures/a.pdf}",
+		);
+		expect(references("main.tex", ["chapters/one.tex", "refs.bib"])).toBe(
+			"\\input{chapters/one}\n\\bibliography{refs}",
+		);
+		expect(references("thesis/ch.tex", ["thesis/img/a.png"], false, "thesis/main.tex")).toBe(
+			"\\includegraphics{img/a.png}",
+		);
+	});
+});

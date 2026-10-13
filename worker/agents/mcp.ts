@@ -8,7 +8,7 @@ import type { Env } from "../env";
 import { type MemberProject, memberProjects, room, roomConfig } from "../projects";
 import { type AgentProps, WRITE } from "./oauth";
 
-const INSTRUCTIONS = `annomate is where people review Typst documents kept in GitHub repos. They leave comments on passages, and this server lets you read and answer them.
+const INSTRUCTIONS = `annomate is where people review Typst, LaTeX and Markdown documents kept in GitHub repos. They leave comments on passages, and this server lets you read and answer them.
 
 To work through a project's comments:
 1. Find the project from the repo you are in: pass its GitHub owner/name (from \`git remote get-url origin\`) as \`project\`, or call list_projects.

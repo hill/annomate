@@ -2503,6 +2503,14 @@ textarea.field {
 	vertical-align: -1px;
 }
 
+.format-choice {
+	display: flex;
+}
+
+.format-choice button {
+	flex: 1;
+}
+
 /* Comment export and coding agents */
 
 .comment-head .via {

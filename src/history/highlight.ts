@@ -1,29 +1,35 @@
+import type { Parser } from "@lezer/common";
 import { highlightTree } from "@lezer/highlight";
-import { typst_lezer } from "codemirror-lang-typst/lezer";
+import { parserFor } from "../editor/languages";
 import { highlighter } from "../editor/theme";
 import type { DiffLine, Hunk, Span } from "./diff";
-
-const typst = typst_lezer().language.parser;
 
 /** Syntax spans for every line of a hunk, keyed by line. Empty for files we cannot parse. */
 export function highlightHunk(hunk: Hunk, path: string): Map<DiffLine, Span[]> {
 	const out = new Map<DiffLine, Span[]>();
-	if (!path.endsWith(".typ")) return out;
+	const parser = parserFor(path);
+	if (!parser) return out;
 	// Each side of a hunk is a contiguous stretch of its file, so parse the sides whole. Lines
 	// parsed one at a time would lose anything that spans lines, such as a block comment.
 	const before = hunk.lines.filter((l) => l.kind !== "add");
 	const after = hunk.lines.filter((l) => l.kind !== "del");
-	highlightLines(before.map((l) => l.text)).forEach((spans, i) => {
+	highlightLines(
+		parser,
+		before.map((l) => l.text),
+	).forEach((spans, i) => {
 		if (before[i].kind === "del") out.set(before[i], spans);
 	});
 	// Context lines sit on both sides. They take their spans from the new one.
-	highlightLines(after.map((l) => l.text)).forEach((spans, i) => {
+	highlightLines(
+		parser,
+		after.map((l) => l.text),
+	).forEach((spans, i) => {
 		out.set(after[i], spans);
 	});
 	return out;
 }
 
-function highlightLines(lines: string[]): Span[][] {
+function highlightLines(parser: Parser, lines: string[]): Span[][] {
 	const text = lines.join("\n");
 	const starts: number[] = [];
 	let offset = 0;
@@ -32,7 +38,7 @@ function highlightLines(lines: string[]): Span[][] {
 		offset += line.length + 1;
 	}
 	const out: Span[][] = lines.map(() => []);
-	highlightTree(typst.parse(text), highlighter, (from, to, cls) => {
+	highlightTree(parser.parse(text), highlighter, (from, to, cls) => {
 		for (let i = lineAt(starts, from); i < lines.length && starts[i] < to; i++) {
 			const start = starts[i];
 			const end = start + lines[i].length;

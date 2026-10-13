@@ -16,6 +16,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Y from "yjs";
 import { applyMinimalDiff, createAnchor, type Resolved, resolveAnchor } from "../../shared/anchor";
+import { isSource, pdfName } from "../../shared/formats";
 import { isTextPath, type Presence, type User } from "../../shared/protocol";
 import { ApiError, api, type CommitFile, type Member, type Project, signIn } from "../api";
 import { type Draft, Rail } from "../comments/Rail";
@@ -25,8 +26,9 @@ import { useDiffMode } from "../history/CommitDiff";
 import { Counts, FileDiff } from "../history/FileDiff";
 import { HistoryDrawer } from "../history/HistoryDrawer";
 import { colorFor } from "../presence/colors";
-import { Engine } from "../preview/engine";
+import { createEngine } from "../preview";
 import { Preview, type PreviewHandle } from "../preview/Preview";
+import type { Engine } from "../preview/types";
 import { Room, usePresence, useRoom } from "../room/provider";
 import { navigate } from "../router";
 import { Drawer } from "../ui/Drawer";
@@ -176,6 +178,7 @@ function Workspace({
 	const panes = useRef<HTMLDivElement>(null);
 
 	const mainFile = git?.mainFile ?? project.mainFile;
+	const format = git?.format ?? project.format;
 	const currentFile = file ?? mainFile;
 	const [owner, repoName] = project.repo.split("/");
 
@@ -215,10 +218,10 @@ function Workspace({
 	mainRef.current = mainFile;
 	const [engine, setEngine] = useState<Engine | null>(null);
 	useEffect(() => {
-		const e = new Engine(room, () => mainRef.current);
+		const e = createEngine(format, room, () => mainRef.current);
 		setEngine(e);
 		return () => e.destroy();
-	}, [room]);
+	}, [room, format]);
 	useEffect(() => {
 		if (status === "live") void engine?.start();
 	}, [status, engine]);
@@ -226,13 +229,13 @@ function Workspace({
 	// Keep the project grid's first-page thumbnail fresh: once soon after opening, then at most every two minutes.
 	useEffect(() => {
 		if (!engine) return;
-		let lastSvg: string | null = null;
+		let lastVersion = 0;
 		let lastSaved = 0;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const unsubscribe = engine.subscribe(() => {
-			const { svg, phase } = engine.getState();
-			if (phase !== "ready" || !svg || svg === lastSvg) return;
-			lastSvg = svg;
+			const { version, phase } = engine.getState();
+			if (phase !== "ready" || !version || version === lastVersion) return;
+			lastVersion = version;
 			clearTimeout(timer);
 			const wait = Math.max(4000, lastSaved + 120_000 - Date.now());
 			timer = setTimeout(async () => {
@@ -443,7 +446,7 @@ function Workspace({
 		}
 		if (!paths.length) return null;
 
-		const snippet = references(file, paths, code);
+		const snippet = references(file, paths, code, mainFile);
 		const from = Y.createAbsolutePositionFromRelativePosition(anchor, room.doc)?.index ?? at;
 		text.insert(from, snippet);
 		return { from, to: from + snippet.length };
@@ -459,10 +462,7 @@ function Workspace({
 		const url = URL.createObjectURL(new Blob([pdf as BlobPart], { type: "application/pdf" }));
 		const a = document.createElement("a");
 		a.href = url;
-		a.download = `${repoName}-${mainFile
-			.replace(/\.typ$/, "")
-			.split("/")
-			.pop()}.pdf`;
+		a.download = pdfName(project.repo, mainFile);
 		a.click();
 		setTimeout(() => URL.revokeObjectURL(url), 10_000);
 	}
@@ -470,13 +470,13 @@ function Workspace({
 	const sourceFiles = useCallback(() => {
 		const out: { path: string; text: string }[] = [];
 		const current = room.files.get(currentFile);
-		if (current && currentFile.endsWith(".typ"))
+		if (current && isSource(format, currentFile))
 			out.push({ path: currentFile, text: current.toString() });
 		for (const [path, text] of room.files) {
-			if (path !== currentFile && path.endsWith(".typ")) out.push({ path, text: text.toString() });
+			if (path !== currentFile && isSource(format, path)) out.push({ path, text: text.toString() });
 		}
 		return out;
-	}, [room, currentFile]);
+	}, [room, currentFile, format]);
 
 	const jumpToSource = useCallback(
 		(path: string, offset: number) => {
@@ -489,9 +489,9 @@ function Workspace({
 	const syncPreview = useCallback(
 		(offset: number) => {
 			const text = room.files.get(currentFile);
-			if (text && currentFile.endsWith(".typ")) preview.current?.reveal(text.toString(), offset);
+			if (text && isSource(format, currentFile)) preview.current?.reveal(text.toString(), offset);
 		},
-		[room, currentFile],
+		[room, currentFile, format],
 	);
 
 	useEffect(() => {
@@ -728,6 +728,7 @@ function Workspace({
 								ref={editor}
 								room={room}
 								path={currentFile}
+								mainFile={mainFile}
 								threads={fileThreads}
 								activeThread={active}
 								onSelectThread={selectThread}

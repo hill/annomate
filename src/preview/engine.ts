@@ -5,39 +5,23 @@ import {
 } from "@myriaddreamin/typst.ts/renderer";
 import * as Y from "yjs";
 import type { Room } from "../room/provider";
-import type { Diagnostic, WorkerRequest, WorkerResponse } from "./typst.worker";
+import { type Diagnostic, type Engine, type EngineState, PAGE_GAP, type Page } from "./types";
+import type { WorkerRequest, WorkerResponse } from "./typst.worker";
 import TypstWorker from "./typst.worker?worker";
 
 const RENDERER_WASM =
 	"https://cdn.jsdelivr.net/npm/@myriaddreamin/typst-ts-renderer@0.7.0/pkg/typst_ts_renderer_bg.wasm";
 
-/** Space between pages in the preview, in points. Pointer positions are shared in this layout. */
-export const PAGE_GAP = 16;
 const DEBOUNCE_MS = 120;
 const FONT = /\.(ttf|otf|ttc|otc)$/i;
-
-export interface Page {
-	top: number;
-	width: number;
-	height: number;
-}
-
-export interface EngineState {
-	phase: "loading" | "ready" | "failed";
-	svg: string | null;
-	pages: Page[];
-	width: number;
-	height: number;
-	diagnostics: Diagnostic[];
-	compileMs: number;
-	error?: string;
-}
 
 /**
  * Compiles the room's files in a Web Worker and renders the result to SVG on
  * the main thread. Keeps the last good render on screen while there are errors.
  */
-export class Engine {
+export class TypstEngine implements Engine {
+	readonly textSelector = ".tsel";
+	private svg: string | null = null;
 	private worker = new TypstWorker();
 	private renderer: TypstRenderer = createTypstRenderer();
 	private session: RenderSession | null = null;
@@ -56,19 +40,56 @@ export class Engine {
 	private started = false;
 	state: EngineState = {
 		phase: "loading",
-		svg: null,
 		pages: [],
 		width: 0,
 		height: 0,
 		diagnostics: [],
 		compileMs: 0,
+		version: 0,
 	};
 
+	private entrySource: string | null = null;
+
+	/**
+	 * @param entry generates the file to compile from the main file, for documents Typst
+	 *   typesets but does not read directly. It is compiled at `entry.path`, outside the project.
+	 */
 	constructor(
 		private room: Room,
 		private mainFile: () => string,
+		private entry?: { path: string; source(main: string, paths: string[]): string },
 	) {
 		this.worker.onmessage = (e: MessageEvent<WorkerResponse>) => this.onMessage(e.data);
+	}
+
+	/** The file to compile, posting a fresh entry first when the main file or template changed. */
+	private target(): string {
+		if (!this.entry) return this.mainFile();
+		const paths = [...this.room.files.keys(), ...this.room.assets.keys()];
+		const source = this.entry.source(this.mainFile(), paths);
+		if (source !== this.entrySource) {
+			this.entrySource = source;
+			this.post({ type: "source", path: this.entry.path, text: source });
+		}
+		return this.entry.path;
+	}
+
+	/**
+	 * Point problems in the generated entry, or in the packages it loads, at the main file. The
+	 * person can only fix the document, so that is where the message belongs.
+	 */
+	private located(diagnostics: Diagnostic[]): Diagnostic[] {
+		if (!this.entry) return diagnostics;
+		return (
+			diagnostics
+				// Call frames inside the generated code say nothing the person can act on.
+				.filter((d) => this.room.files.has(d.path) || !d.message.startsWith("while calling"))
+				.map((d) =>
+					this.room.files.has(d.path)
+						? d
+						: { ...d, path: this.mainFile(), line: null, endLine: null, column: 0, endColumn: 0 },
+				)
+		);
 	}
 
 	/** Call once the room has synced, so the asset list and files are known. */
@@ -192,7 +213,7 @@ export class Engine {
 
 	compile() {
 		this.latest = ++this.nextId;
-		this.post({ type: "compile", id: this.latest, main: this.mainFile() });
+		this.post({ type: "compile", id: this.latest, main: this.target() });
 	}
 
 	async pdf(): Promise<{ pdf?: Uint8Array; diagnostics: Diagnostic[] }> {
@@ -200,7 +221,7 @@ export class Engine {
 		const id = ++this.nextId;
 		return new Promise((resolve) => {
 			this.pdfWaiters.set(id, resolve);
-			this.post({ type: "pdf", id, main: this.mainFile() });
+			this.post({ type: "pdf", id, main: this.target() });
 		});
 	}
 
@@ -213,7 +234,8 @@ export class Engine {
 	 * page loads, which can be never.
 	 */
 	async thumbnail(width = 480): Promise<Blob | null> {
-		const { svg, pages, width: docWidth, height: docHeight } = this.state;
+		const { svg } = this;
+		const { pages, width: docWidth, height: docHeight } = this.state;
 		const page = pages[0];
 		if (!svg || !page) return null;
 		const template = document.createElement("template");
@@ -257,13 +279,14 @@ export class Engine {
 	private async onMessage(msg: WorkerResponse) {
 		if (msg.type === "fatal") return this.set({ phase: "failed", error: msg.message });
 		if (msg.type === "pdf") {
-			this.pdfWaiters.get(msg.id)?.(msg);
+			this.pdfWaiters.get(msg.id)?.({ pdf: msg.pdf, diagnostics: this.located(msg.diagnostics) });
 			this.pdfWaiters.delete(msg.id);
 			return;
 		}
 		if (msg.type !== "compiled" || msg.id !== this.latest) return;
+		const diagnostics = this.located(msg.diagnostics);
 		if (!msg.vector || !this.session) {
-			return this.set({ phase: "ready", diagnostics: msg.diagnostics, compileMs: msg.ms });
+			return this.set({ phase: "ready", diagnostics, compileMs: msg.ms });
 		}
 		this.renderer.manipulateData({
 			renderSession: this.session,
@@ -272,7 +295,22 @@ export class Engine {
 		});
 		const raw = await this.renderer.renderSvg({ renderSession: this.session });
 		if (msg.id !== this.latest) return;
-		this.set({ phase: "ready", diagnostics: msg.diagnostics, compileMs: msg.ms, ...layout(raw) });
+		const { svg, ...size } = layout(raw);
+		this.svg = svg;
+		this.set({
+			phase: "ready",
+			diagnostics,
+			compileMs: msg.ms,
+			version: this.state.version + 1,
+			...size,
+		});
+	}
+
+	mount(el: HTMLElement) {
+		if (this.svg !== null && el.dataset.version !== String(this.state.version)) {
+			el.innerHTML = this.svg;
+			el.dataset.version = String(this.state.version);
+		}
 	}
 
 	private set(patch: Partial<EngineState>) {
@@ -303,7 +341,7 @@ export class Engine {
  * typst.ts stacks pages edge to edge. Spread them apart by PAGE_GAP so each
  * reads as a sheet, and report where each one sits.
  */
-function layout(raw: string): Pick<EngineState, "svg" | "pages" | "width" | "height"> {
+function layout(raw: string): { svg: string; pages: Page[]; width: number; height: number } {
 	// The renderer's output is not strict XML, so it goes through the forgiving HTML parser.
 	const template = document.createElement("template");
 	template.innerHTML = raw;

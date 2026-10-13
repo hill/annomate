@@ -7,6 +7,7 @@ import {
 	withAccessModel,
 	withPackageRegistry,
 } from "@myriaddreamin/typst.ts/options.init";
+import type { Diagnostic } from "./types";
 
 // The compiler WASM is 28 MB, over the Workers static asset limit, so it comes from the npm CDN.
 const COMPILER_WASM =
@@ -19,13 +20,6 @@ export type WorkerRequest =
 	| { type: "remove"; path: string }
 	| { type: "compile"; id: number; main: string }
 	| { type: "pdf"; id: number; main: string };
-
-export interface Diagnostic {
-	path: string;
-	range: string;
-	severity: string;
-	message: string;
-}
 
 export type WorkerResponse =
 	| { type: "ready" }
@@ -55,17 +49,46 @@ async function init(fonts: Uint8Array[]) {
 	post({ type: "ready" });
 }
 
+interface TypstDiagnostic {
+	path?: string;
+	range?: string;
+	severity?: string;
+	message?: string;
+}
+
 function normalise(diagnostics: unknown[] | undefined): Diagnostic[] {
 	return (diagnostics ?? []).map((d) => {
-		const x = d as Partial<Diagnostic>;
+		const x = d as TypstDiagnostic;
 		return {
 			path: (x.path ?? "").replace(/^\/+/, ""),
-			range: x.range ?? "",
-			severity: x.severity ?? "error",
+			severity: x.severity === "warning" ? "warning" : "error",
 			message: x.message ?? String(d),
+			...parseRange(x.range ?? ""),
 		};
 	});
 }
+
+/** Typst reports zero-based `line:col-line:col`, or sometimes just a line. */
+export function parseRange(range: string) {
+	const full = range.match(/^(\d+):(\d+)-(\d+):(\d+)/);
+	if (full) {
+		const [line, column, endLine, endColumn] = full.slice(1).map(Number);
+		return { line, column, endLine, endColumn };
+	}
+	const line = range.match(/^(\d+)/);
+	if (line) return { line: Number(line[1]), column: 0, endLine: Number(line[1]), endColumn: 0 };
+	return { line: null, column: 0, endLine: null, endColumn: 0 };
+}
+
+const failure = (path: string, e: unknown): Diagnostic => ({
+	path,
+	severity: "error",
+	message: String(e),
+	line: null,
+	column: 0,
+	endLine: null,
+	endColumn: 0,
+});
 
 async function handle(msg: WorkerRequest) {
 	if (msg.type === "init")
@@ -99,7 +122,7 @@ async function handle(msg: WorkerRequest) {
 				post({
 					type: "compiled",
 					id: msg.id,
-					diagnostics: [{ path: msg.main, range: "", severity: "error", message: String(e) }],
+					diagnostics: [failure(msg.main, e)],
 					ms: 0,
 				});
 			}
@@ -120,7 +143,7 @@ async function handle(msg: WorkerRequest) {
 				post({
 					type: "pdf",
 					id: msg.id,
-					diagnostics: [{ path: msg.main, range: "", severity: "error", message: String(e) }],
+					diagnostics: [failure(msg.main, e)],
 				});
 			}
 		}

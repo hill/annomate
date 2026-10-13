@@ -12,9 +12,9 @@ import {
 } from "react";
 import type { Presence } from "../../shared/protocol";
 import type { Room } from "../room/provider";
-import type { Engine } from "./engine";
 import { Problems, problemCount } from "./Problems";
 import { type Rect, TextIndex } from "./sync";
+import type { Engine } from "./types";
 
 export interface PreviewHandle {
 	/** Scroll to the rendered text for this source position and flash it. */
@@ -85,17 +85,23 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 
 	// Text index, rebuilt lazily after each render. Rects are in points so zoom does not stale them.
 	const index = useRef<TextIndex | null>(null);
-	useEffect(() => {
-		void state.svg;
+	const doc = useRef<HTMLDivElement>(null);
+	useLayoutEffect(() => {
+		void state.version;
+		if (doc.current) engine.mount(doc.current);
 		index.current = null;
-	}, [state.svg]);
+	}, [engine, state.version]);
 	const getIndex = useCallback(() => {
-		const doc = stage.current?.querySelector(".doc");
 		// A hidden pane measures as zero, which would cache useless positions.
-		if (!doc || !stage.current?.offsetWidth) return null;
-		index.current ??= new TextIndex(doc, stage.current, scaleRef.current);
+		if (!doc.current || !stage.current?.offsetWidth) return null;
+		index.current ??= new TextIndex(
+			doc.current,
+			stage.current,
+			scaleRef.current,
+			engine.textSelector,
+		);
 		return index.current;
-	}, []);
+	}, [engine]);
 
 	// Zoom around a screen point, keeping the document point under it still.
 	// While a gesture runs, the painted page is scaled with a CSS transform,
@@ -373,7 +379,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 			)}
 
 			<div className="preview-scroll" ref={scroller}>
-				{state.svg ? (
+				{state.version > 0 ? (
 					// An explicit width: max-content would make the browser measure every text-layer element on each resize.
 					<div
 						style={{
@@ -397,8 +403,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 									style={{ top: p.top * scale, width: p.width * scale, height: p.height * scale }}
 								/>
 							))}
-							{/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced by the Typst renderer from the project's own source */}
-							<div className="doc" dangerouslySetInnerHTML={{ __html: state.svg }} />
+							<div className="doc" ref={doc} />
 							{flash && (
 								<div
 									key={flash.key}

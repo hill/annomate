@@ -1,9 +1,18 @@
 import { Hono } from "hono";
+import {
+	detectFormat,
+	FORMATS,
+	formatOf,
+	isFormat,
+	isSource,
+	type ProjectFormat,
+	pickMain,
+} from "../shared/formats";
 import type { User } from "../shared/protocol";
 import { agents } from "./agents";
 import { callback, currentUser, devLogin, login, logout, userToken } from "./auth";
 import type { Env } from "./env";
-import { GitHub, GitHubError } from "./github";
+import { GitHub, GitHubError, type TreeEntry } from "./github";
 import {
 	memberProjects,
 	membership,
@@ -43,6 +52,7 @@ const toProject = (p: ProjectRow & { role?: string }) => ({
 	id: p.id,
 	repo: p.repo,
 	branch: p.branch,
+	format: p.format,
 	mainFile: p.main_file,
 	icon: p.icon,
 	thumbAt: p.thumb_at,
@@ -64,7 +74,12 @@ app.get("/api/projects", async (c) => {
 
 app.post("/api/projects", async (c) => {
 	const user = c.get("user");
-	const body = await c.req.json<{ repo: string; branch?: string; mainFile?: string }>();
+	const body = await c.req.json<{
+		repo: string;
+		branch?: string;
+		format?: string;
+		mainFile?: string;
+	}>();
 	if (!/^[\w.-]+\/[\w.-]+$/.test(body.repo ?? "")) return c.json({ error: "Use owner/name" }, 400);
 
 	const token = await userToken(c.env, user.id);
@@ -82,20 +97,16 @@ app.post("/api/projects", async (c) => {
 			.first<ProjectRow & { role: string }>();
 		if (existing) return c.json(toProject(existing));
 		const snap = await gh.snapshot(await gh.head(branch));
-		const typ = snap.text.filter((e) => e.path.endsWith(".typ")).map((e) => e.path);
-		const mainFile =
-			body.mainFile?.trim() ||
-			typ.find((p) => p === "main.typ") ||
-			typ.find((p) => !p.includes("/")) ||
-			typ[0];
-		if (!mainFile) return c.json({ error: "No .typ files on that branch" }, 400);
+		const document = await documentFor(gh, snap.text, body);
+		if ("error" in document) return c.json(document, 400);
+		const { format, mainFile } = document;
 
 		const id = crypto.randomUUID().slice(0, 8);
 		const now = Date.now();
 		await c.env.DB.batch([
 			c.env.DB.prepare(
-				"INSERT INTO projects (id, owner_id, repo, branch, main_file, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-			).bind(id, user.id, body.repo, branch, mainFile, now),
+				"INSERT INTO projects (id, owner_id, repo, branch, format, main_file, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+			).bind(id, user.id, body.repo, branch, format, mainFile, now),
 			c.env.DB.prepare(
 				"INSERT INTO members (project_id, login, role, added_at) VALUES (?, ?, 'owner', ?)",
 			).bind(id, user.login, now),
@@ -104,6 +115,7 @@ app.post("/api/projects", async (c) => {
 			id,
 			repo: body.repo,
 			branch,
+			format,
 			mainFile,
 			icon: null,
 			thumbAt: null,
@@ -116,6 +128,47 @@ app.post("/api/projects", async (c) => {
 		throw err;
 	}
 });
+
+// LaTeX detection reads the head of each candidate. A repo rarely has more top-level documents.
+const PEEK_FILES = 6;
+const PEEK_CHARS = 4000;
+
+/** The format and main file for a new project: what the request names, or what the repo holds. */
+async function documentFor(
+	gh: GitHub,
+	entries: TreeEntry[],
+	asked: { format?: string; mainFile?: string },
+): Promise<{ format: ProjectFormat; mainFile: string } | { error: string }> {
+	const paths = entries.map((e) => e.path);
+	const heads = new Map<string, string>();
+	const tex = entries.filter((e) => isSource("latex", e.path));
+	if (tex.length && !tex.some((e) => e.path.toLowerCase() === "main.tex")) {
+		const shallow = tex.sort((a, b) => a.path.split("/").length - b.path.split("/").length);
+		await Promise.all(
+			shallow.slice(0, PEEK_FILES).map(async (e) => {
+				heads.set(e.path, (await gh.text(e.sha)).slice(0, PEEK_CHARS));
+			}),
+		);
+	}
+	const read = (path: string) => heads.get(path);
+
+	const mainFile = asked.mainFile?.trim();
+	if (mainFile) {
+		if (!paths.includes(mainFile)) return { error: `No ${mainFile} on that branch` };
+		const format = isFormat(asked.format) ? asked.format : formatOf(mainFile);
+		if (!format || !isSource(format, mainFile)) {
+			return { error: `${mainFile} is not a Typst, LaTeX or Markdown file` };
+		}
+		return { format, mainFile };
+	}
+	if (isFormat(asked.format)) {
+		const main = pickMain(asked.format, paths, read);
+		return main
+			? { format: asked.format, mainFile: main }
+			: { error: `No ${FORMATS[asked.format].label} files on that branch` };
+	}
+	return detectFormat(paths, read) ?? { error: "No Typst, LaTeX or Markdown files on that branch" };
+}
 
 app.get("/api/projects/:id", async (c) => {
 	const project = await membership(c.env, c.req.param("id"), c.get("user").login);
@@ -138,8 +191,13 @@ app.patch("/api/projects/:id", async (c) => {
 	if (project?.role !== "owner") return c.json({ error: "Only the owner can change this" }, 403);
 	const body = await c.req.json<{ mainFile?: string; icon?: string | null }>();
 	if (body.mainFile !== undefined) {
-		if (!body.mainFile.endsWith(".typ"))
-			return c.json({ error: "Main file must be a .typ file" }, 400);
+		if (!isSource(project.format, body.mainFile)) {
+			const { label, sources } = FORMATS[project.format];
+			return c.json(
+				{ error: `The main file of a ${label} project must be ${sources.join(" or ")}` },
+				400,
+			);
+		}
 		await c.env.DB.prepare("UPDATE projects SET main_file = ? WHERE id = ?")
 			.bind(body.mainFile, project.id)
 			.run();
