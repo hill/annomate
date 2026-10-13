@@ -2608,6 +2608,17 @@ textarea.field {
 	right: 7px;
 }
 
+.copy-link {
+	flex-shrink: 0;
+	min-width: 104px;
+	justify-content: center;
+}
+
+.copy-link.copied svg {
+	color: var(--ok);
+	animation: pop 160ms var(--spring);
+}
+
 .copy-block .btn.copied {
 	color: var(--ok);
 }

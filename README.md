@@ -1,6 +1,6 @@
 # annomate
 
-A free Typst editor where comments stay put.
+A simple, free Typst editor for annotating with mates.
 
 Open a Typst project from GitHub, edit it with your co-authors in real time, and comment on any passage. Each comment stays with its words through rewrites, moves and pushes from someone's laptop. Commit back to the repo when you are done.
 

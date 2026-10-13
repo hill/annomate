@@ -1,12 +1,14 @@
 import {
 	ArrowDownToLine,
 	BookOpen,
+	Check,
 	CircleAlert,
 	CircleCheck,
 	Code,
 	Columns2,
 	Download,
 	FileText,
+	Link,
 	Maximize2,
 	MessageSquare,
 	MessageSquarePlus,
@@ -1157,7 +1159,14 @@ function ShareDrawer({
 }) {
 	const [login, setLogin] = useState("");
 	const [error, setError] = useState("");
+	const [copied, setCopied] = useState(false);
 	const isOwner = project.role === "owner";
+	const link = `${location.origin}/p/${project.id}`;
+	useEffect(() => {
+		if (!copied) return;
+		const t = setTimeout(() => setCopied(false), 1400);
+		return () => clearTimeout(t);
+	}, [copied]);
 
 	async function invite() {
 		setError("");
@@ -1172,6 +1181,29 @@ function ShareDrawer({
 
 	return (
 		<Drawer title="People" onClose={onClose}>
+			<div className="form-row">
+				<label className="label" htmlFor="project-link">
+					Link
+				</label>
+				<div className="row">
+					<input
+						id="project-link"
+						className="field mono"
+						value={link}
+						readOnly
+						onFocus={(e) => e.currentTarget.select()}
+					/>
+					<button
+						type="button"
+						className={`btn copy-link${copied ? " copied" : ""}`}
+						style={{ height: 30 }}
+						onClick={() => navigator.clipboard.writeText(link).then(() => setCopied(true))}
+					>
+						{copied ? <Check size={14} key="check" /> : <Link size={14} key="link" />}
+						{copied ? "Copied" : "Copy link"}
+					</button>
+				</div>
+			</div>
 			{isOwner && (
 				<form
 					className="form-row"
