@@ -44,6 +44,7 @@ export function Landing() {
 				</a>
 				<nav className="landing-nav">
 					<a href="/auth/login">Sign in</a>
+					<a href="https://github.com/hill/annomate">GitHub</a>
 				</nav>
 				<a className="landing-credit" href="https://hill.xyz">
 					Made by Tom Hill

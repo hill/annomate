@@ -3272,6 +3272,8 @@ textarea.field {
 		padding: 20px 16px;
 	}
 	.landing-nav {
+		grid-auto-flow: column;
+		gap: 16px;
 		margin: 0;
 	}
 	.landing-credit {
