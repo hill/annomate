@@ -361,13 +361,14 @@ textarea.field {
 
 .frame {
 	display: grid;
-	grid-template-columns: var(--side-w, 232px) 1fr;
+	grid-template-columns: 232px 1fr;
 	height: 100%;
 	transition: grid-template-columns 220ms var(--ease);
 }
 
+/* Columns are set outright rather than through a custom property. Custom properties inherit, so changing one would restyle the whole preview SVG. */
 .frame.collapsed {
-	--side-w: 0px;
+	grid-template-columns: 0px 1fr;
 }
 
 .sidebar {
@@ -841,7 +842,7 @@ textarea.field {
 
 .panes {
 	display: grid;
-	grid-template-columns: var(--left, 1fr) 1px 1fr;
+	grid-template-columns: 1fr 1px 1fr;
 	grid-template-rows: minmax(0, 1fr);
 	min-height: 0;
 	position: relative;
@@ -852,7 +853,8 @@ textarea.field {
 /* The hidden panes leave the grid entirely, so one column holds whichever pane is left. */
 .panes[data-layout="source"],
 .panes[data-layout="preview"] {
-	grid-template-columns: 1fr;
+	/* Beats the split width set inline on the element. */
+	grid-template-columns: 1fr !important;
 }
 
 .panes[data-layout="source"] > .preview,
@@ -884,14 +886,13 @@ textarea.field {
 	user-select: none;
 }
 
+/* A drag locks each pane's content to its width at the start, set inline, so the drag only clips them. */
 .panes.dragging .source .editor {
 	flex: none;
-	width: var(--lock-src);
 }
 
 .panes.dragging .preview-scroll {
 	flex: 1 0 auto;
-	width: var(--lock-prev);
 	align-self: flex-end;
 }
 
@@ -1245,11 +1246,13 @@ textarea.field {
 	margin: 20px auto 60px;
 }
 
+/* Pages out of view are neither laid out nor painted, which keeps resizes and scrolling cheap on long documents. */
 .sheet {
 	position: absolute;
 	left: 0;
 	background: var(--paper);
 	box-shadow: var(--paper-shadow);
+	content-visibility: auto;
 }
 
 .stage {
@@ -1262,14 +1265,27 @@ textarea.field {
 	contain: strict;
 }
 
-/* typst.ts gives the page SVG the class typst-doc, so pin its box against any other rule using that name. */
-.stage .doc svg {
+/* Each page's SVG keeps typst.ts's class typst-doc, so pin its box against any other rule using that name. */
+.stage .sheet > svg {
 	display: block;
 	width: 100%;
 	max-width: none;
 	height: 100%;
 	margin: 0;
 	padding: 0;
+}
+
+/* Not display: none, which would stop some browsers resolving the references into it. */
+.stage .defs {
+	position: absolute;
+	width: 0;
+	height: 0;
+	overflow: hidden;
+}
+
+.stage .defs svg {
+	width: 0;
+	height: 0;
 }
 
 .sync-flash {
@@ -3049,7 +3065,7 @@ textarea.field {
 
 @media (max-width: 900px) {
 	.frame {
-		--side-w: 0px;
+		grid-template-columns: 0px 1fr;
 	}
 	.panes {
 		grid-template-columns: 1fr !important;

@@ -57,10 +57,13 @@ export function Rail(props: Props) {
 	const [connecting, setConnecting] = useState(false);
 	const visible = threads.filter((t) => t.resolved === (tab === "resolved"));
 	const openCount = threads.filter((t) => !t.resolved).length;
-	const activeResolved = threads.find((t) => t.id === active)?.resolved;
+	// Selecting a thread shows its tab. Resolving it later leaves the tab where it is.
+	const lookup = useRef(threads);
+	lookup.current = threads;
 	useEffect(() => {
-		if (activeResolved !== undefined) setTab(activeResolved ? "resolved" : "open");
-	}, [activeResolved]);
+		const t = lookup.current.find((x) => x.id === active);
+		if (t) setTab(t.resolved ? "resolved" : "open");
+	}, [active]);
 
 	// Current file first, in document order. Then other files, grouped.
 	const byFile = new Map<string, Thread[]>();

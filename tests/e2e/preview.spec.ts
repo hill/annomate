@@ -13,7 +13,7 @@ test("pinch zooms, wheel scrolls, and source and preview follow each other", asy
 	expect(created.ok(), await created.text()).toBeTruthy();
 	const { id } = await created.json();
 	await page.goto(`/p/${id}`);
-	await expect(page.locator(".stage .doc svg")).toBeVisible({ timeout: 60_000 });
+	await expect(page.locator(".stage .sheet svg").first()).toBeVisible({ timeout: 60_000 });
 
 	const scroller = page.locator(".preview-scroll");
 	const box = await scroller.boundingBox();

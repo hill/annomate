@@ -226,13 +226,14 @@ function Workspace({
 	// Keep the project grid's first-page thumbnail fresh: once soon after opening, then at most every two minutes.
 	useEffect(() => {
 		if (!engine) return;
-		let lastSvg: string | null = null;
+		let lastPage: string | null = null;
 		let lastSaved = 0;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const unsubscribe = engine.subscribe(() => {
-			const { svg, phase } = engine.getState();
-			if (phase !== "ready" || !svg || svg === lastSvg) return;
-			lastSvg = svg;
+			const { pages, phase } = engine.getState();
+			const first = pages[0]?.svg;
+			if (phase !== "ready" || !first || first === lastPage) return;
+			lastPage = first;
 			clearTimeout(timer);
 			const wait = Math.max(4000, lastSaved + 120_000 - Date.now());
 			timer = setTimeout(async () => {
@@ -698,7 +699,7 @@ function Workspace({
 					ref={panes}
 					className={`panes${dragging ? " dragging" : ""}`}
 					data-layout={layout}
-					style={{ "--left": `${left}px` } as React.CSSProperties}
+					style={{ gridTemplateColumns: `${left}px 1px 1fr` }}
 				>
 					<section className="pane source">
 						<div className="pane-head">
@@ -763,15 +764,16 @@ function Workspace({
 						onDragging={(d) => {
 							// Lock the editor and preview to their current widths so a drag only clips them.
 							const el = panes.current;
-							if (el && d) {
-								const ed = el.querySelector<HTMLElement>(".source .editor");
-								const pv = el.querySelector<HTMLElement>(".preview-scroll");
-								el.style.setProperty("--lock-src", `${ed?.offsetWidth ?? 0}px`);
-								el.style.setProperty("--lock-prev", `${pv?.offsetWidth ?? 0}px`);
+							for (const pane of el?.querySelectorAll<HTMLElement>(
+								".source .editor, .preview-scroll",
+							) ?? []) {
+								pane.style.width = d ? `${pane.offsetWidth}px` : "";
 							}
 							setDragging(d);
 						}}
-						onMove={(w) => panes.current?.style.setProperty("--left", `${w}px`)}
+						onMove={(w) => {
+							if (panes.current) panes.current.style.gridTemplateColumns = `${w}px 1px 1fr`;
+						}}
 						onDone={setLeft}
 					/>
 					<section className="pane preview">

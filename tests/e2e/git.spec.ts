@@ -75,7 +75,7 @@ test("commit, then pull an outside push without losing the comment's place", asy
 	expect(created.ok(), await created.text()).toBeTruthy();
 	const { id } = await created.json();
 	await page.goto(`/p/${id}`);
-	await expect(page.locator(".stage .doc svg")).toBeVisible({ timeout: 60_000 });
+	await expect(page.locator(".stage .sheet svg").first()).toBeVisible({ timeout: 60_000 });
 
 	// Comment on the method sentence.
 	await selectLine(page, "We sampled 400");

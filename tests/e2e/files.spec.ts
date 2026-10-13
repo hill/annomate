@@ -29,7 +29,7 @@ test("folders, moves, renames and uploads in the file tree", async ({ page }) =>
 	expect(created.ok(), await created.text()).toBeTruthy();
 	const { id } = await created.json();
 	await page.goto(`/p/${id}`);
-	await expect(page.locator(".stage .doc svg")).toBeVisible({ timeout: 60_000 });
+	await expect(page.locator(".stage .sheet svg").first()).toBeVisible({ timeout: 60_000 });
 
 	// New folder at the root holds a hidden placeholder until it has files.
 	await tree(page).hover();

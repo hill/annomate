@@ -20,11 +20,14 @@ export interface Page {
 	top: number;
 	width: number;
 	height: number;
+	/** The page alone, as an SVG that draws from the shared `defs`. */
+	svg: string;
 }
 
 export interface EngineState {
 	phase: "loading" | "ready" | "failed";
-	svg: string | null;
+	/** Glyphs and styles every page refers to, as an SVG of no size. Null until the first render. */
+	defs: string | null;
 	pages: Page[];
 	width: number;
 	height: number;
@@ -56,7 +59,7 @@ export class Engine {
 	private started = false;
 	state: EngineState = {
 		phase: "loading",
-		svg: null,
+		defs: null,
 		pages: [],
 		width: 0,
 		height: 0,
@@ -213,13 +216,14 @@ export class Engine {
 	 * page loads, which can be never.
 	 */
 	async thumbnail(width = 480): Promise<Blob | null> {
-		const { svg, pages, width: docWidth, height: docHeight } = this.state;
+		const { defs, pages } = this.state;
 		const page = pages[0];
-		if (!svg || !page) return null;
+		if (!defs || !page) return null;
 		const template = document.createElement("template");
-		template.innerHTML = svg;
-		const root = template.content.querySelector("svg");
-		if (!root) return null;
+		template.innerHTML = defs + page.svg;
+		const [shared, root] = template.content.querySelectorAll("svg");
+		if (!shared || !root) return null;
+		root.prepend(...shared.children);
 		// The selectable text layer is HTML in foreignObject, which taints the canvas. The glyphs are paths.
 		for (const fo of root.querySelectorAll("foreignObject")) fo.remove();
 		// An image source must be strict XML, which the stored markup is not.
@@ -237,7 +241,7 @@ export class Engine {
 			if (!ctx) return null;
 			ctx.fillStyle = "#ffffff";
 			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			ctx.drawImage(img, 0, -page.top * scale, docWidth * scale, docHeight * scale);
+			ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 			return await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
 		} finally {
 			URL.revokeObjectURL(url);
@@ -300,30 +304,35 @@ export class Engine {
 }
 
 /**
- * typst.ts stacks pages edge to edge. Spread them apart by PAGE_GAP so each
- * reads as a sheet, and report where each one sits.
+ * typst.ts renders every page into one SVG. Split it into one SVG per page, so
+ * the browser can skip painting the pages out of view, and stack them
+ * PAGE_GAP apart so each reads as a sheet. Glyphs are defined once and every
+ * page uses them by id, so the definitions go into a separate SVG of their own.
  */
-function layout(raw: string): Pick<EngineState, "svg" | "pages" | "width" | "height"> {
+function layout(raw: string): Pick<EngineState, "defs" | "pages" | "width" | "height"> {
 	// The renderer's output is not strict XML, so it goes through the forgiving HTML parser.
 	const template = document.createElement("template");
 	template.innerHTML = raw;
 	const svg = template.content.querySelector("svg");
-	if (!svg) return { svg: raw, pages: [], width: 0, height: 0 };
+	if (!svg) return { defs: null, pages: [], width: 0, height: 0 };
+	svg.removeAttribute("width");
+	svg.removeAttribute("height");
+	const groups = [...svg.querySelectorAll(":scope > g.typst-page")];
 	const pages: Page[] = [];
 	let top = 0;
 	let width = 0;
-	for (const g of svg.querySelectorAll("g.typst-page")) {
+	for (const g of groups) {
 		const w = Number(g.getAttribute("data-page-width"));
 		const h = Number(g.getAttribute("data-page-height"));
-		g.setAttribute("transform", `translate(0, ${top})`);
-		pages.push({ top, width: w, height: h });
+		const page = svg.cloneNode(false) as SVGSVGElement;
+		page.setAttribute("viewBox", `0 0 ${w} ${h}`);
+		g.removeAttribute("transform");
+		page.append(g);
+		pages.push({ top, width: w, height: h, svg: page.outerHTML });
 		width = Math.max(width, w);
 		top += h + PAGE_GAP;
 	}
-	const height = Math.max(0, top - PAGE_GAP);
-	svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-	svg.removeAttribute("width");
-	svg.removeAttribute("height");
-	svg.setAttribute("preserveAspectRatio", "xMidYMin meet");
-	return { svg: svg.outerHTML, pages, width, height };
+	svg.setAttribute("class", "typst-defs");
+	svg.setAttribute("aria-hidden", "true");
+	return { defs: svg.outerHTML, pages, width, height: Math.max(0, top - PAGE_GAP) };
 }

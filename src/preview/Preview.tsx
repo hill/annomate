@@ -67,14 +67,6 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 	const [showDiags, setShowDiags] = useState(false);
 	const [flash, setFlash] = useState<(Rect & { key: number }) | null>(null);
 
-	useLayoutEffect(() => {
-		const el = scroller.current;
-		if (!el) return;
-		const ro = new ResizeObserver(() => setBoxWidth(el.clientWidth));
-		ro.observe(el);
-		return () => ro.disconnect();
-	}, []);
-
 	// Refitting re-lays out the whole SVG, so it waits until a pane resize finishes.
 	const fitRef = useRef(1);
 	if (!frozen && state.width) fitRef.current = Math.max(0.1, (boxWidth - PAD_X * 2) / state.width);
@@ -86,9 +78,9 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 	// Text index, rebuilt lazily after each render. Rects are in points so zoom does not stale them.
 	const index = useRef<TextIndex | null>(null);
 	useEffect(() => {
-		void state.svg;
+		void state.pages;
 		index.current = null;
-	}, [state.svg]);
+	}, [state.pages]);
 	const getIndex = useCallback(() => {
 		const doc = stage.current?.querySelector(".doc");
 		// A hidden pane measures as zero, which would cache useless positions.
@@ -173,6 +165,54 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 		el.scrollLeft = st.offsetLeft + a.x * scale - a.sx;
 		el.scrollTop = st.offsetTop + a.y * scale - a.sy;
 	}, [scale]);
+
+	// A pane resize, such as the sidebar sliding shut, changes the width on every frame. Restyling
+	// tens of thousands of SVG nodes each frame stalls the animation, so until the width holds still
+	// the painted page is scaled with a CSS transform around the middle of the view, then refitted once.
+	const page = useRef<HTMLDivElement>(null);
+	const fitted = useRef(0);
+	fitted.current = frozen ? fitted.current : boxWidth;
+	useLayoutEffect(() => {
+		const el = scroller.current;
+		if (!el) return;
+		let resizing: { timer: number; ox: number; oy: number } | null = null;
+		const settle = () => {
+			const st = stage.current;
+			if (resizing && st) {
+				const { ox, oy } = resizing;
+				const sx = st.offsetLeft + ox - el.scrollLeft;
+				const sy = st.offsetTop + oy - el.scrollTop;
+				if (el.clientWidth !== fitted.current)
+					anchor.current = { x: ox / scaleRef.current, y: oy / scaleRef.current, sx, sy };
+				st.style.transform = "";
+				if (page.current) page.current.style.width = "";
+			}
+			resizing = null;
+			setBoxWidth(el.clientWidth);
+		};
+		const ro = new ResizeObserver(() => {
+			const st = stage.current;
+			const before = fitted.current;
+			if (!st || !before || live.current) return settle();
+			if (resizing) clearTimeout(resizing.timer);
+			resizing ??= {
+				timer: 0,
+				ox: st.offsetWidth / 2,
+				oy: el.scrollTop + el.clientHeight / 2 - st.offsetTop,
+			};
+			const factor = Math.max(0.1, el.clientWidth - PAD_X * 2) / Math.max(1, before - PAD_X * 2);
+			st.style.transformOrigin = `${resizing.ox}px ${resizing.oy}px`;
+			st.style.transform = `scale(${factor})`;
+			if (page.current)
+				page.current.style.width = `${Math.max(el.clientWidth, st.offsetWidth * factor + PAD_X * 2)}px`;
+			resizing.timer = window.setTimeout(settle, 150);
+		});
+		ro.observe(el);
+		return () => {
+			ro.disconnect();
+			if (resizing) clearTimeout(resizing.timer);
+		};
+	}, []);
 
 	// Trackpad pinch arrives as ctrl+wheel. Safari also sends gesture events. Touch screens pinch with two fingers.
 	useEffect(() => {
@@ -373,9 +413,10 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 			)}
 
 			<div className="preview-scroll" ref={scroller}>
-				{state.svg ? (
+				{state.defs ? (
 					// An explicit width: max-content would make the browser measure every text-layer element on each resize.
 					<div
+						ref={page}
 						style={{
 							width: Math.max(boxWidth, state.width * scale + PAD_X * 2),
 							padding: `20px ${PAD_X}px 60px`,
@@ -390,15 +431,21 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 							onPointerDown={onPointerDown}
 							onPointerUp={onPointerUp}
 						>
-							{state.pages.map((p) => (
-								<div
-									key={p.top}
-									className="sheet"
-									style={{ top: p.top * scale, width: p.width * scale, height: p.height * scale }}
-								/>
-							))}
-							{/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced by the Typst renderer from the project's own source */}
-							<div className="doc" dangerouslySetInnerHTML={{ __html: state.svg }} />
+							<div className="doc">
+								{state.pages.map((p, i) => (
+									<div
+										// By position, so a page whose markup is unchanged after a recompile is left alone.
+										// biome-ignore lint/suspicious/noArrayIndexKey: pages have no identity beyond their place
+										key={i}
+										className="sheet"
+										style={{ top: p.top * scale, width: p.width * scale, height: p.height * scale }}
+										// biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced by the Typst renderer from the project's own source
+										dangerouslySetInnerHTML={{ __html: p.svg }}
+									/>
+								))}
+								{/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced by the Typst renderer from the project's own source */}
+								<div className="defs" dangerouslySetInnerHTML={{ __html: state.defs }} />
+							</div>
 							{flash && (
 								<div
 									key={flash.key}

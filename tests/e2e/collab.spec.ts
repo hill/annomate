@@ -42,7 +42,7 @@ test("two people co-edit, see each other, and comments keep their place", async 
 	await alice.goto(`/p/${project.id}`);
 	await bob.goto(`/p/${project.id}`);
 	for (const page of [alice, bob]) {
-		await expect(page.locator(".stage .doc svg")).toBeVisible({ timeout: 60_000 });
+		await expect(page.locator(".stage .sheet svg").first()).toBeVisible({ timeout: 60_000 });
 	}
 
 	// Edits sync both ways.
