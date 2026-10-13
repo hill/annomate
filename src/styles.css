@@ -161,6 +161,15 @@ svg.lucide {
 	stroke: #ffffff;
 }
 
+/* The mark inverts in the dark theme, so it never sinks into the background. */
+:root[data-theme="dark"] .mark-bg {
+	fill: #f2f2f2;
+}
+
+:root[data-theme="dark"] .mark-ink {
+	stroke: #111111;
+}
+
 .wordmark {
 	display: inline-flex;
 	align-items: center;
@@ -3064,4 +3073,194 @@ textarea.field {
 	display: grid;
 	gap: 6px;
 	margin-top: 12px;
+}
+
+/* Landing page, for visitors who are not signed in. */
+
+.landing {
+	display: grid;
+	grid-template-columns: 260px minmax(0, 1fr);
+	min-height: 100%;
+	background: var(--bg);
+}
+
+.landing-side {
+	position: sticky;
+	top: 0;
+	display: flex;
+	flex-direction: column;
+	height: 100vh;
+	padding: 96px 32px 32px 48px;
+}
+
+.landing-brand {
+	display: inline-flex;
+	align-items: center;
+	gap: 10px;
+	font:
+		500 22px / 1 "Newsreader",
+		Georgia,
+		serif;
+	letter-spacing: -0.01em;
+	text-decoration: none;
+}
+
+.landing-nav {
+	display: grid;
+	gap: 10px;
+	margin-top: 40px;
+	font-size: 15px;
+}
+
+.landing-nav a {
+	color: var(--muted);
+	text-decoration: none;
+	transition: color 120ms var(--ease);
+}
+
+.landing-nav a:hover {
+	color: var(--text);
+}
+
+.landing-credit {
+	margin-top: auto;
+	color: var(--faint);
+	font-size: 12.5px;
+	text-decoration: none;
+}
+
+.landing-credit:hover {
+	color: var(--muted);
+}
+
+/* Faint guide lines either side of the content, as on a drafting sheet. */
+.landing-main {
+	max-width: 1040px;
+	padding: 96px 48px 96px;
+	border-right: 1px solid var(--line);
+	border-left: 1px solid var(--line);
+}
+
+.landing-main h1 {
+	margin: 0 0 24px;
+	font:
+		400 44px / 1.1 "Newsreader",
+		Georgia,
+		serif;
+	letter-spacing: -0.015em;
+	text-wrap: balance;
+}
+
+.landing-main > p {
+	max-width: 62ch;
+	margin: 0 0 32px;
+	color: var(--muted);
+	font-size: 17px;
+	line-height: 1.6;
+}
+
+.landing-cta {
+	height: 40px;
+	padding: 0 16px 0 14px;
+	gap: 8px;
+	border-radius: 8px;
+	font-size: 15px;
+}
+
+.landing-hero {
+	margin: 64px 0 0;
+	overflow: hidden;
+	border-radius: 12px;
+	box-shadow: var(--float);
+}
+
+.landing .shot {
+	display: block;
+	width: 100%;
+	height: auto;
+}
+
+.landing .shot.dark,
+:root[data-theme="dark"] .landing .shot.light {
+	display: none;
+}
+
+:root[data-theme="dark"] .landing .shot.dark {
+	display: block;
+}
+
+.landing-features {
+	display: grid;
+	grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.4fr);
+	gap: 32px;
+	margin-top: 48px;
+}
+
+.landing-features figure {
+	margin: 0;
+}
+
+.landing-crop {
+	display: grid;
+	place-items: center;
+	height: 260px;
+	padding: 20px;
+	overflow: hidden;
+	border: 1px solid var(--line);
+	border-radius: 12px;
+	background: var(--side);
+}
+
+.landing-crop .shot {
+	width: auto;
+	max-width: 100%;
+	max-height: 100%;
+	border-radius: 8px;
+	box-shadow: var(--paper-shadow);
+}
+
+.landing-features figcaption {
+	margin-top: 14px;
+	color: var(--muted);
+	font-size: 14.5px;
+	line-height: 1.55;
+}
+
+.landing-features figcaption strong {
+	color: var(--text);
+	font-weight: 600;
+}
+
+@media (max-width: 860px) {
+	.landing {
+		grid-template-columns: 1fr;
+	}
+	.landing-side {
+		position: static;
+		flex-direction: row;
+		align-items: center;
+		justify-content: space-between;
+		height: auto;
+		padding: 20px 16px;
+	}
+	.landing-nav {
+		margin: 0;
+	}
+	.landing-credit {
+		display: none;
+	}
+	.landing-main {
+		padding: 32px 16px 64px;
+		border: 0;
+	}
+	.landing-main h1 {
+		font-size: 34px;
+	}
+	.landing-features {
+		grid-template-columns: 1fr;
+	}
+	.landing-crop {
+		height: auto;
+		padding: 14px;
+	}
 }

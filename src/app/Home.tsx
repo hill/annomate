@@ -1,11 +1,12 @@
 import { LayoutGrid, Plus } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import type { User } from "../../shared/protocol";
-import { ApiError, ago, api, type Project, type Repo, signIn } from "../api";
+import { ApiError, ago, api, type Project, type Repo } from "../api";
 import { navigate } from "../router";
 import { Drawer } from "../ui/Drawer";
 import { GithubMark, githubUrl } from "../ui/GithubMark";
-import { Mark, Wordmark } from "./Mark";
+import { Landing } from "./Landing";
+import { Wordmark } from "./Mark";
 import { ProjectIcon } from "./ProjectIcon";
 import { SidebarFrame, SideFoot } from "./Sidebar";
 
@@ -26,19 +27,7 @@ export function Home() {
 
 	if (me === undefined) return null;
 
-	if (me === null) {
-		return (
-			<div className="signin">
-				<div className="signin-card">
-					<Mark size={40} />
-					<div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.01em" }}>annomate</div>
-					<button type="button" className="btn primary" onClick={signIn}>
-						Sign in with GitHub
-					</button>
-				</div>
-			</div>
-		);
-	}
+	if (me === null) return <Landing />;
 
 	return (
 		<SidebarFrame
