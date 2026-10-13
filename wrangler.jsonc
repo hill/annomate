@@ -1,0 +1,38 @@
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "annomate",
+	"main": "worker/index.ts",
+	"compatibility_date": "2026-10-01",
+	// global_fetch_strictly_public: agents identify themselves by a metadata document URL, which
+	// the OAuth server fetches. This keeps such a fetch off private addresses.
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+	"assets": {
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*",
+			"/auth/*",
+			"/ws/*",
+			"/mcp",
+			"/authorize",
+			"/oauth/*",
+			"/.well-known/*"
+		]
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "annomate",
+			"database_id": "local",
+			"migrations_dir": "worker/migrations"
+		}
+	],
+	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "local" }],
+	"durable_objects": {
+		"bindings": [{ "name": "ROOM", "class_name": "ProjectRoom" }]
+	},
+	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["ProjectRoom"] }],
+	"vars": {
+		"GITHUB_CLIENT_ID": ""
+	}
+	// Secrets: GITHUB_CLIENT_SECRET, SESSION_SECRET, TOKEN_KEY (wrangler secret put, or .dev.vars locally)
+}

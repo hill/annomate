@@ -1,0 +1,6 @@
+GITHUB_CLIENT_SECRET=
+SESSION_SECRET=
+TOKEN_KEY=
+# Localhost only: /auth/dev?login=name&id=1 signs in without OAuth, using this token for GitHub
+DEV_LOGIN=1
+DEV_GITHUB_TOKEN=

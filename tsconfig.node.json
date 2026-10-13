@@ -1,0 +1,14 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"strict": true,
+		"noEmit": true,
+		"skipLibCheck": true,
+		"types": ["node"],
+		"lib": ["ES2023", "DOM"],
+		"tsBuildInfoFile": "node_modules/.tmp/node.tsbuildinfo"
+	},
+	"include": ["tests/e2e", "playwright.config.ts", "vite.config.ts", "vitest.config.ts"]
+}

@@ -1,0 +1,19 @@
+{
+	"$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+	"files": { "includes": ["**", "!dist", "!node_modules", "!.wrangler", "!test-results"] },
+	"formatter": { "indentStyle": "tab", "lineWidth": 100 },
+	"css": {
+		"linter": { "enabled": true }
+	},
+	"overrides": [
+		{
+			"includes": ["**/*.css"],
+			"linter": {
+				"rules": {
+					"complexity": { "noImportantStyles": "off" },
+					"style": { "noDescendingSpecificity": "off" }
+				}
+			}
+		}
+	]
+}
