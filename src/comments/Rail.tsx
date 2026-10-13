@@ -57,6 +57,10 @@ export function Rail(props: Props) {
 	const [connecting, setConnecting] = useState(false);
 	const visible = threads.filter((t) => t.resolved === (tab === "resolved"));
 	const openCount = threads.filter((t) => !t.resolved).length;
+	const activeResolved = threads.find((t) => t.id === active)?.resolved;
+	useEffect(() => {
+		if (activeResolved !== undefined) setTab(activeResolved ? "resolved" : "open");
+	}, [activeResolved]);
 
 	// Current file first, in document order. Then other files, grouped.
 	const byFile = new Map<string, Thread[]>();
@@ -244,6 +248,10 @@ function ThreadCard({
 }: Props & { thread: Thread; resolution?: Resolved; isActive: boolean }) {
 	const [reply, setReply] = useState("");
 	const [leaving, setLeaving] = useState(false);
+	const card = useRef<HTMLElement>(null);
+	useEffect(() => {
+		if (isActive) revealCard(card.current);
+	}, [isActive]);
 	const status = resolved?.status ?? "detached";
 	// Let the tick pop before the card leaves its list.
 	const toggleResolved = () => {
@@ -261,6 +269,7 @@ function ThreadCard({
 
 	return (
 		<article
+			ref={card}
 			className={`thread${isActive ? " active" : ""}${thread.resolved ? " resolved" : ""}${leaving ? " leaving" : ""}`}
 			onClickCapture={(e) => {
 				if ((e.target as Element).closest(".thread-resolve")) return;
@@ -404,4 +413,21 @@ function CommentView({
 			)}
 		</div>
 	);
+}
+
+/** Bring a card into its list's view, centred when it was out of sight. Selecting a card already in view leaves the list still. */
+function revealCard(el: HTMLElement | null) {
+	// Wait a frame, since the active card grows its reply box.
+	requestAnimationFrame(() => {
+		const list = el?.closest(".rail-list");
+		if (!el || !list) return;
+		const box = el.getBoundingClientRect();
+		const view = list.getBoundingClientRect();
+		if (box.top >= view.top && box.bottom <= view.bottom) return;
+		const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		el.scrollIntoView({
+			block: box.height > view.height ? "start" : "center",
+			behavior: still ? "auto" : "smooth",
+		});
+	});
 }

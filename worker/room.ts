@@ -225,6 +225,34 @@ export class ProjectRoom extends DurableObject<Env> {
 		return thread ? { thread, line: anchor.line } : { error: "The thread could not be saved." };
 	}
 
+	/** Replace the text of a comment. Agents write as their person, so only that person's comments. */
+	async agentEditComment(
+		user: User,
+		config: ProjectConfig,
+		commentId: string,
+		body: string,
+	): Promise<{ thread: Thread } | { error: string }> {
+		await this.prepare(user, config);
+		if (!body.trim()) return { error: "The new text is empty." };
+		const row = this.sql
+			.exec<CommentRow>("SELECT * FROM comments WHERE id = ?", commentId)
+			.toArray()[0];
+		if (!row) return { error: `No message \`${commentId}\` in this project.` };
+		if (JSON.parse(row.author).id !== user.id)
+			return {
+				error: `Message \`${commentId}\` was written by someone else, so it cannot be edited.`,
+			};
+		this.sql.exec(
+			"UPDATE comments SET body = ?, edited_at = ? WHERE id = ?",
+			body.trim(),
+			Date.now(),
+			commentId,
+		);
+		this.publish(row.thread_id);
+		const thread = this.thread(row.thread_id);
+		return thread ? { thread } : { error: "The thread could not be read back." };
+	}
+
 	async agentResolve(
 		user: User,
 		config: ProjectConfig,

@@ -106,6 +106,7 @@ test("an agent connects through OAuth and lists its tools", async ({ page }) => 
 		const { tools } = await client.listTools();
 		expect(tools.map((t) => t.name).sort()).toEqual([
 			"create_thread",
+			"edit_comment",
 			"get_comments",
 			"get_thread",
 			"list_projects",
@@ -270,7 +271,68 @@ test.describe("with a project", () => {
 			await client.callTool({ name: "get_comments", arguments: { project: REPO as string } }),
 		);
 		expect(report).toContain("Could this be clearer?");
+
+		// The report names each message, and editing one by that id updates the page live.
+		const messageId = report.match(/message `([^`]+)`/)?.[1];
+		expect(messageId).toBeTruthy();
+		const edited = await client.callTool({
+			name: "edit_comment",
+			arguments: {
+				project: REPO as string,
+				message_id: messageId as string,
+				body: "Could this be shorter?",
+			},
+		});
+		expect(edited.isError, textOf(edited)).toBeFalsy();
+		await expect(page.locator(".thread .comment-body")).toHaveText("Could this be shorter?");
+		const unknown = await client.callTool({
+			name: "edit_comment",
+			arguments: { project: REPO as string, message_id: "no-such-message", body: "x" },
+		});
+		expect(unknown.isError).toBe(true);
 		await client.close();
+		expect((await page.request.delete(`/api/projects/${project.id}`)).ok()).toBeTruthy();
+	});
+
+	test("clicking a comment far down the source opens the pane on that card", async ({ page }) => {
+		await page.goto("/auth/dev?login=erin&id=9011&name=Erin");
+		await clearProjects(page.request, REPO as string);
+		const created = await page.request.post("/api/projects", { data: { repo: REPO } });
+		expect(created.ok(), await created.text()).toBeTruthy();
+		const project = await created.json();
+		await page.goto(`/p/${project.id}`);
+		await expect(page.locator(".cm-line").first()).toBeVisible({ timeout: 60_000 });
+
+		const { access_token } = await connect(page, page.request);
+		const client = await mcp(access_token);
+		const ids: string[] = [];
+		for (let line = 1; line <= 80 && ids.length < 16; line++) {
+			const result = await client.callTool({
+				name: "create_thread",
+				arguments: { project: REPO as string, line, body: `Note on line ${line}` },
+			});
+			const id = textOf(result).match(/Created thread `([^`]+)`/)?.[1];
+			if (id) ids.push(id);
+		}
+		await client.close();
+		expect(ids.length).toBeGreaterThan(10);
+
+		await expect(page.getByRole("button", { name: "Show comments" })).toBeVisible();
+		const last = ids.at(-1) as string;
+		await page.locator(`.cm-comment-mark[data-thread="${last}"]`).first().click();
+
+		const list = page.locator(".rail-list");
+		const card = page.locator(".rail .thread.active");
+		await expect(card).toContainText(/Note on line \d+/);
+		await expect
+			.poll(async () => {
+				const [l, c] = [await list.boundingBox(), await card.boundingBox()];
+				return (
+					!!l && !!c && c.y >= l.y - 1 && c.y + Math.min(c.height, l.height) <= l.y + l.height + 1
+				);
+			})
+			.toBe(true);
+		expect(await list.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
 		expect((await page.request.delete(`/api/projects/${project.id}`)).ok()).toBeTruthy();
 	});
 });

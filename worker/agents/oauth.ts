@@ -145,7 +145,7 @@ ${
 <form method="post">
 	<input type="hidden" name="handle" value="${html(handle)}">
 	<label class="scope"><input type="checkbox" checked disabled> Read comments on your projects</label>
-	<label class="scope"><input type="checkbox" name="scope" value="${WRITE}" checked> Add, reply to and resolve comments</label>
+	<label class="scope"><input type="checkbox" name="scope" value="${WRITE}" checked> Add, edit, reply to and resolve comments</label>
 	<div class="actions">
 		<button class="btn" name="decision" value="deny">Cancel</button>
 		<button class="btn primary" name="decision" value="approve" autofocus>Connect</button>

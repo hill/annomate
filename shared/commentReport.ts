@@ -278,7 +278,7 @@ function threadMarkdown(t: ReportThread, commit: string): string[] {
 	for (const c of t.comments) {
 		const who = `**${c.name}** (@${c.login})${c.via ? ` via ${c.via}` : ""}`;
 		out.push(
-			`${who}, ${timestamp(c.at)}${c.edited ? ", edited" : ""}:`,
+			`${who}, ${timestamp(c.at)}${c.edited ? ", edited" : ""}, message \`${c.id}\`:`,
 			"",
 			...quoteBlock(c.body),
 			"",

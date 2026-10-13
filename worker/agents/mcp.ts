@@ -16,6 +16,8 @@ To work through a project's comments:
 3. Make the changes in your checkout. annomate's live text can be ahead of your checkout, so when a line number does not match, search for the quoted text.
 4. Answer each thread you handled with reply_to_thread, or resolve_thread with a short note of what changed.
 
+To correct a message you or your person wrote, call edit_comment with its message id, as get_comments shows it, and the full replacement text.
+
 To review a document yourself, call create_thread for each point. Quote the passage you mean, as it appears in the file, and add its line when the same words appear more than once. The comment appears in annomate at once, under the person's name, marked as yours.
 
 annomate does not see your local edits. Push your commits to the project's branch, then someone pulls them in annomate.`;
@@ -198,6 +200,38 @@ function server(agent: Agent): McpServer {
 				return text(
 					`Created thread \`${thread.id}\` on ${thread.anchor.file}:${created.line}, on "${excerpt}${thread.anchor.quote.length > 80 ? "…" : ""}". ${agent.origin}/p/${p.id}`,
 				);
+			}),
+	);
+
+	mcp.registerTool(
+		"edit_comment",
+		{
+			title: "Edit comment",
+			description:
+				"Replace the text of one message in a thread. Only messages written under your name can be edited. The message shows as edited.",
+			inputSchema: z.object({
+				project,
+				message_id: z.string().describe("The message id, as get_comments shows it."),
+				body: z.string().min(1).describe("The full new text of the message, in plain text."),
+			}),
+			annotations: {
+				readOnlyHint: false,
+				destructiveHint: true,
+				idempotentHint: true,
+				openWorldHint: false,
+			},
+		},
+		async ({ project, message_id, body }) =>
+			writable(agent) ??
+			withProject(agent, project, async (p) => {
+				const edited = await room(agent.env, p.id).agentEditComment(
+					agent.user,
+					roomConfig(p),
+					message_id,
+					body,
+				);
+				if ("error" in edited) return failure(edited.error);
+				return text(`Edited message \`${message_id}\` in thread \`${edited.thread.id}\`.`);
 			}),
 	);
 

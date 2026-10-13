@@ -109,7 +109,9 @@ describe("reportMarkdown", () => {
 		expect(md).toContain("> ten sites");
 		expect(md).toContain("> 3 | We sampled ten sites across the northern valley.");
 		expect(md).toContain("  4 | Each site was visited twice.");
-		expect(md).toContain("**Tom Hill** (@hill) via Claude Code, 2025-10-09 08:54 UTC:");
+		expect(md).toContain(
+			"**Tom Hill** (@hill) via Claude Code, 2025-10-09 08:54 UTC, message `t1-1`:",
+		);
 		expect(md).toContain("matches `4f1c2a9`");
 	});
 

@@ -19,7 +19,7 @@ A pull merges upstream changes three ways and writes them in as a minimal diff, 
 
 ## Coding agents
 
-Claude Code, Codex, Cursor and other MCP clients can read, add, reply to and resolve comments. An agent starts a thread by quoting the passage it means, so the comment lands in the right place even when its checkout is behind annomate's live text. The comments pane has the setup command for each. For Claude Code:
+Claude Code, Codex, Cursor and other MCP clients can read, add, edit, reply to and resolve comments. An agent starts a thread by quoting the passage it means, so the comment lands in the right place even when its checkout is behind annomate's live text. The comments pane has the setup command for each. For Claude Code:
 
 ```sh
 claude mcp add --transport http annomate https://annomate.hill.xyz/mcp
