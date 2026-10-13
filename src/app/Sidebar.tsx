@@ -10,42 +10,62 @@ import {
 	Settings,
 	UserPlus,
 } from "lucide-react";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { createContext, type ReactNode, useContext, useEffect, useRef, useState } from "react";
 import type { User } from "../../shared/protocol";
 import { api, type Member, type Project } from "../api";
 import { navigate } from "../router";
 import { ThemeMenu } from "../theme/ThemeMenu";
 import { GithubMark, githubUrl } from "../ui/GithubMark";
 import { ProjectIcon } from "./ProjectIcon";
+import { useStored } from "./stored";
 
+const Collapse = createContext<{ collapsed: boolean; set(collapsed: boolean): void } | null>(null);
+
+/**
+ * The app frame. It holds the collapsed state itself, so toggling re-renders only the frame and
+ * its buttons: the sidebar and page it wraps arrive as unchanged elements, which React skips.
+ */
 export function SidebarFrame({
-	collapsed,
+	storageKey,
 	sidebar,
 	children,
 }: {
-	collapsed: boolean;
+	/** Where to remember the collapsed state. Without one the sidebar stays open. */
+	storageKey?: string;
 	sidebar: ReactNode;
 	children: ReactNode;
 }) {
+	const [stored, set] = useStored(storageKey ?? "am:sidebar-unused", false);
+	const collapsed = storageKey ? stored : false;
 	return (
-		<div className={`frame${collapsed ? " collapsed" : ""}`}>
-			<nav className="sidebar" aria-hidden={collapsed}>
-				{sidebar}
-			</nav>
-			{children}
-		</div>
+		<Collapse.Provider value={{ collapsed, set }}>
+			<div className={`frame${collapsed ? " collapsed" : ""}`}>
+				<nav className="sidebar" aria-hidden={collapsed}>
+					{sidebar}
+				</nav>
+				{children}
+			</div>
+		</Collapse.Provider>
 	);
 }
 
-export function SideHead({
-	project,
-	onCollapse,
-	onSettings,
-}: {
-	project: Project;
-	onCollapse(): void;
-	onSettings(): void;
-}) {
+/** Hides the sidebar from inside it, or with `show`, brings it back from the top bar. */
+export function SidebarButton({ show = false }: { show?: boolean }) {
+	const frame = useContext(Collapse);
+	if (!frame || frame.collapsed !== show) return null;
+	return (
+		<button
+			type="button"
+			className="btn ghost icon"
+			aria-label={show ? "Show sidebar" : "Hide sidebar"}
+			onClick={() => frame.set(!show)}
+		>
+			<PanelLeft size={16} />
+		</button>
+	);
+}
+
+export function SideHead({ project, onSettings }: { project: Project; onSettings(): void }) {
 	const [menu, setMenu] = useState(false);
 	const [projects, setProjects] = useState<Project[] | null>(null);
 	const ref = useRef<HTMLDivElement>(null);
@@ -65,14 +85,7 @@ export function SideHead({
 				<span className="name">{project.repo.split("/")[1]}</span>
 				<ChevronsUpDown size={14} />
 			</button>
-			<button
-				type="button"
-				className="btn ghost icon"
-				aria-label="Hide sidebar"
-				onClick={onCollapse}
-			>
-				<PanelLeft size={16} />
-			</button>
+			<SidebarButton />
 			{menu && (
 				<div className="menu" style={{ top: 44, left: 8, right: 8 }}>
 					{(projects ?? []).map((p) => (

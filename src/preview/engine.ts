@@ -20,14 +20,16 @@ export interface Page {
 	top: number;
 	width: number;
 	height: number;
-	/** The page alone, as an SVG that draws from the shared `defs`. */
-	svg: string;
+	/** The page drawn as a standalone SVG image, decoded and ready to rasterise. */
+	image: HTMLImageElement;
+	/** SVG markup of the page's selectable text layer and links, with nothing drawn. */
+	text: string;
 }
 
 export interface EngineState {
 	phase: "loading" | "ready" | "failed";
-	/** Glyphs and styles every page refers to, as an SVG of no size. Null until the first render. */
-	defs: string | null;
+	/** typst.ts's stylesheet for the text layers, as an SVG of no size. Null until the first render. */
+	styles: string | null;
 	pages: Page[];
 	width: number;
 	height: number;
@@ -55,11 +57,13 @@ export class Engine {
 		(r: { pdf?: Uint8Array; diagnostics: Diagnostic[] }) => void
 	>();
 	private loadedAssets = new Map<string, string>();
+	/** The current page images, by their markup, so an unchanged page keeps its image. */
+	private images = new Map<string, HTMLImageElement>();
 	private listeners = new Set<() => void>();
 	private started = false;
 	state: EngineState = {
 		phase: "loading",
-		defs: null,
+		styles: null,
 		pages: [],
 		width: 0,
 		height: 0,
@@ -211,41 +215,24 @@ export class Engine {
 	 * Draw the first page of the last good render to a small image, for the
 	 * project grid. Returns null before anything has rendered.
 	 *
-	 * It rasterises the SVG already on screen. The renderer's own canvas output
-	 * holds the renderer, and so blocks the preview, until every image on the
-	 * page loads, which can be never.
+	 * It rasterises the page image the preview draws from. The renderer's own
+	 * canvas output holds the renderer, and so blocks the preview, until every
+	 * image on the page loads, which can be never.
 	 */
 	async thumbnail(width = 480): Promise<Blob | null> {
-		const { defs, pages } = this.state;
-		const page = pages[0];
-		if (!defs || !page) return null;
-		const template = document.createElement("template");
-		template.innerHTML = defs + page.svg;
-		const [shared, root] = template.content.querySelectorAll("svg");
-		if (!shared || !root) return null;
-		root.prepend(...shared.children);
-		// The selectable text layer is HTML in foreignObject, which taints the canvas. The glyphs are paths.
-		for (const fo of root.querySelectorAll("foreignObject")) fo.remove();
-		// An image source must be strict XML, which the stored markup is not.
-		const xml = new XMLSerializer().serializeToString(root);
-		const url = URL.createObjectURL(new Blob([xml], { type: "image/svg+xml" }));
-		try {
-			const img = new Image();
-			img.src = url;
-			await img.decode();
-			const scale = width / page.width;
-			const canvas = document.createElement("canvas");
-			canvas.width = Math.round(page.width * scale);
-			canvas.height = Math.round(page.height * scale);
-			const ctx = canvas.getContext("2d");
-			if (!ctx) return null;
-			ctx.fillStyle = "#ffffff";
-			ctx.fillRect(0, 0, canvas.width, canvas.height);
-			ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-			return await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
-		} finally {
-			URL.revokeObjectURL(url);
-		}
+		const page = this.state.pages[0];
+		if (!page) return null;
+		const img = page.image;
+		const scale = width / page.width;
+		const canvas = document.createElement("canvas");
+		canvas.width = Math.round(page.width * scale);
+		canvas.height = Math.round(page.height * scale);
+		const ctx = canvas.getContext("2d");
+		if (!ctx) return null;
+		ctx.fillStyle = "#ffffff";
+		ctx.fillRect(0, 0, canvas.width, canvas.height);
+		ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+		return new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.82));
 	}
 
 	private post(msg: WorkerRequest) {
@@ -276,7 +263,35 @@ export class Engine {
 		});
 		const raw = await this.renderer.renderSvg({ renderSession: this.session });
 		if (msg.id !== this.latest) return;
-		this.set({ phase: "ready", diagnostics: msg.diagnostics, compileMs: msg.ms, ...layout(raw) });
+		const split = layout(raw);
+		const previous = this.images;
+		this.images = new Map();
+		const pages = await Promise.all(
+			split.pages.map(async ({ picture, ...page }) => {
+				let image = previous.get(picture) ?? this.images.get(picture);
+				if (!image) {
+					image = new Image();
+					image.src = URL.createObjectURL(new Blob([picture], { type: "image/svg+xml" }));
+					this.images.set(picture, image);
+					// Decoded before it is shown, so a recompile never flashes an empty sheet.
+					await image.decode().catch(() => {});
+				}
+				this.images.set(picture, image);
+				return { ...page, image };
+			}),
+		);
+		for (const [picture, image] of previous)
+			if (!this.images.has(picture)) URL.revokeObjectURL(image.src);
+		if (msg.id !== this.latest) return;
+		this.set({
+			phase: "ready",
+			diagnostics: msg.diagnostics,
+			compileMs: msg.ms,
+			styles: split.styles,
+			width: split.width,
+			height: split.height,
+			pages,
+		});
 	}
 
 	private set(patch: Partial<EngineState>) {
@@ -300,39 +315,111 @@ export class Engine {
 		}
 		this.releaseSession?.();
 		this.worker.terminate();
+		for (const image of this.images.values()) URL.revokeObjectURL(image.src);
 	}
 }
 
+interface Split {
+	styles: string | null;
+	width: number;
+	height: number;
+	pages: (Omit<Page, "image"> & { picture: string })[];
+}
+
 /**
- * typst.ts renders every page into one SVG. Split it into one SVG per page, so
- * the browser can skip painting the pages out of view, and stack them
- * PAGE_GAP apart so each reads as a sheet. Glyphs are defined once and every
- * page uses them by id, so the definitions go into a separate SVG of their own.
+ * typst.ts renders every page into one SVG. Each page is a few thousand glyph
+ * elements, and as live DOM the browser re-records and re-layers all of them on
+ * any frame where something on screen moves, which stalls resizes and
+ * animations. So each page is drawn as an image of its own SVG, which the
+ * browser paints as one item and rasterises off the main thread, at full
+ * sharpness for any size. Over it sits the page with only its text layer and
+ * links, for selection, links and click-to-sync. Pages stack PAGE_GAP apart so
+ * each reads as a sheet.
  */
-function layout(raw: string): Pick<EngineState, "defs" | "pages" | "width" | "height"> {
+function layout(raw: string): Split {
 	// The renderer's output is not strict XML, so it goes through the forgiving HTML parser.
 	const template = document.createElement("template");
 	template.innerHTML = raw;
 	const svg = template.content.querySelector("svg");
-	if (!svg) return { defs: null, pages: [], width: 0, height: 0 };
+	if (!svg) return { styles: null, pages: [], width: 0, height: 0 };
 	svg.removeAttribute("width");
 	svg.removeAttribute("height");
-	const groups = [...svg.querySelectorAll(":scope > g.typst-page")];
-	const pages: Page[] = [];
+	const defined = new Map<string, Element>();
+	for (const el of svg.querySelectorAll(":scope > defs > [id]")) defined.set(el.id, el);
+	const styles = [...svg.querySelectorAll(":scope > style")];
+	const xml = new XMLSerializer();
+
+	const pages: Split["pages"] = [];
 	let top = 0;
 	let width = 0;
-	for (const g of groups) {
+	for (const g of svg.querySelectorAll(":scope > g.typst-page")) {
 		const w = Number(g.getAttribute("data-page-width"));
 		const h = Number(g.getAttribute("data-page-height"));
-		const page = svg.cloneNode(false) as SVGSVGElement;
-		page.setAttribute("viewBox", `0 0 ${w} ${h}`);
 		g.removeAttribute("transform");
-		page.append(g);
-		pages.push({ top, width: w, height: h, svg: page.outerHTML });
+
+		// The image: everything drawn, with the definitions this page uses. The text
+		// layer is HTML in foreignObject, which an image cannot hold.
+		const drawn = g.cloneNode(true) as Element;
+		for (const el of drawn.querySelectorAll("foreignObject")) el.remove();
+		const defs = document.createElementNS(SVG_NS, "defs");
+		const wanted = [...references(drawn)];
+		const seen = new Set(wanted);
+		for (let i = 0; i < wanted.length; i++) {
+			const el = defined.get(wanted[i])?.cloneNode(true) as Element | undefined;
+			if (!el) continue;
+			defs.append(el);
+			// A definition can itself refer to others, such as a glyph drawn with a clip.
+			for (const id of references(el)) {
+				if (seen.has(id)) continue;
+				seen.add(id);
+				wanted.push(id);
+			}
+		}
+		const picture = document.createElementNS(SVG_NS, "svg");
+		picture.setAttribute("width", String(w));
+		picture.setAttribute("height", String(h));
+		picture.setAttribute("viewBox", `0 0 ${w} ${h}`);
+		picture.append(...styles.map((s) => s.cloneNode(true)), defs, drawn);
+
+		// The text layer: the same page with every drawing element taken out.
+		for (const el of g.querySelectorAll("use, path, image")) el.remove();
+		const text = svg.cloneNode(false) as Element;
+		text.setAttribute("viewBox", `0 0 ${w} ${h}`);
+		text.append(g);
+
+		pages.push({
+			top,
+			width: w,
+			height: h,
+			picture: xml.serializeToString(picture),
+			text: text.outerHTML,
+		});
 		width = Math.max(width, w);
 		top += h + PAGE_GAP;
 	}
-	svg.setAttribute("class", "typst-defs");
-	svg.setAttribute("aria-hidden", "true");
-	return { defs: svg.outerHTML, pages, width, height: Math.max(0, top - PAGE_GAP) };
+	const sheet = svg.cloneNode(false) as Element;
+	sheet.setAttribute("class", "typst-styles");
+	sheet.setAttribute("aria-hidden", "true");
+	sheet.append(...styles);
+	return { styles: sheet.outerHTML, pages, width, height: Math.max(0, top - PAGE_GAP) };
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const XLINK_NS = "http://www.w3.org/1999/xlink";
+
+/** Ids a drawing refers to, through use elements and url(#id) paint and clip references. */
+function references(root: Element): Set<string> {
+	const ids = new Set<string>();
+	const all = [root, ...root.querySelectorAll("*")];
+	for (const el of all.filter((el) => el.localName === "use")) {
+		const href = el.getAttribute("href") ?? el.getAttributeNS(XLINK_NS, "href");
+		if (href?.startsWith("#")) ids.add(href.slice(1));
+	}
+	for (const el of all) {
+		for (const name of ["clip-path", "fill", "stroke", "mask"]) {
+			const m = /url\(#([^)]+)\)/.exec(el.getAttribute(name) ?? "");
+			if (m) ids.add(m[1]);
+		}
+	}
+	return ids;
 }

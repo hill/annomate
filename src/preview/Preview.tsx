@@ -13,6 +13,7 @@ import {
 import type { Presence } from "../../shared/protocol";
 import type { Room } from "../room/provider";
 import type { Engine } from "./engine";
+import { PageCanvas, resolution } from "./PageCanvas";
 import { Problems, problemCount } from "./Problems";
 import { type Rect, TextIndex } from "./sync";
 
@@ -38,6 +39,8 @@ interface Props {
 }
 
 const PAD_X = 24;
+const SETTLE_MS = 120;
+const PRESENCE_MS = 150;
 // Percentages are against print size, where one point is 96/72 CSS pixels.
 const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 6;
@@ -67,7 +70,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 	const [showDiags, setShowDiags] = useState(false);
 	const [flash, setFlash] = useState<(Rect & { key: number }) | null>(null);
 
-	// Refitting re-lays out the whole SVG, so it waits until a pane resize finishes.
+	// A gutter drag clips the preview rather than resizing it, and refits once on release.
 	const fitRef = useRef(1);
 	if (!frozen && state.width) fitRef.current = Math.max(0.1, (boxWidth - PAD_X * 2) / state.width);
 	const fit = fitRef.current;
@@ -88,6 +91,21 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 		index.current ??= new TextIndex(doc, stage.current, scaleRef.current);
 		return index.current;
 	}, []);
+
+	// While the view moves, by a pane resize or a zoom gesture, pages stretch their bitmaps and the
+	// text layers sit out. Once it has held still for a moment, visible pages redraw at the new size.
+	const [moving, setMoving] = useState(false);
+	const motion = useRef(0);
+	const moved = useCallback(() => {
+		scroller.current?.classList.add("moving");
+		setMoving(true);
+		clearTimeout(motion.current);
+		motion.current = window.setTimeout(() => {
+			scroller.current?.classList.remove("moving");
+			setMoving(false);
+		}, SETTLE_MS);
+	}, []);
+	useEffect(() => () => clearTimeout(motion.current), []);
 
 	// Zoom around a screen point, keeping the document point under it still.
 	// While a gesture runs, the painted page is scaled with a CSS transform,
@@ -143,6 +161,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 			const oy = live.current?.oy ?? ((clientY ?? 0) - rect.top) / (rect.height / st.offsetHeight);
 			st.style.transformOrigin = `${ox}px ${oy}px`;
 			st.style.transform = `scale(${factor})`;
+			moved();
 			live.current = {
 				zoom: target,
 				ox,
@@ -153,7 +172,7 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 				}, 120),
 			};
 		},
-		[commitZoom],
+		[commitZoom, moved],
 	);
 
 	useLayoutEffect(() => {
@@ -166,53 +185,59 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 		el.scrollTop = st.offsetTop + a.y * scale - a.sy;
 	}, [scale]);
 
-	// A pane resize, such as the sidebar sliding shut, changes the width on every frame. Restyling
-	// tens of thousands of SVG nodes each frame stalls the animation, so until the width holds still
-	// the painted page is scaled with a CSS transform around the middle of the view, then refitted once.
-	const page = useRef<HTMLDivElement>(null);
-	const fitted = useRef(0);
-	fitted.current = frozen ? fitted.current : boxWidth;
+	// Refit to the pane's width, keeping the point in the middle of the view still.
+	const frozenRef = useRef(frozen);
+	frozenRef.current = frozen;
 	useLayoutEffect(() => {
 		const el = scroller.current;
 		if (!el) return;
-		let resizing: { timer: number; ox: number; oy: number } | null = null;
-		const settle = () => {
-			const st = stage.current;
-			if (resizing && st) {
-				const { ox, oy } = resizing;
-				const sx = st.offsetLeft + ox - el.scrollLeft;
-				const sy = st.offsetTop + oy - el.scrollTop;
-				if (el.clientWidth !== fitted.current)
-					anchor.current = { x: ox / scaleRef.current, y: oy / scaleRef.current, sx, sy };
-				st.style.transform = "";
-				if (page.current) page.current.style.width = "";
-			}
-			resizing = null;
-			setBoxWidth(el.clientWidth);
-		};
+		let width = 0;
 		const ro = new ResizeObserver(() => {
 			const st = stage.current;
-			const before = fitted.current;
-			if (!st || !before || live.current) return settle();
-			if (resizing) clearTimeout(resizing.timer);
-			resizing ??= {
-				timer: 0,
-				ox: st.offsetWidth / 2,
-				oy: el.scrollTop + el.clientHeight / 2 - st.offsetTop,
-			};
-			const factor = Math.max(0.1, el.clientWidth - PAD_X * 2) / Math.max(1, before - PAD_X * 2);
-			st.style.transformOrigin = `${resizing.ox}px ${resizing.oy}px`;
-			st.style.transform = `scale(${factor})`;
-			if (page.current)
-				page.current.style.width = `${Math.max(el.clientWidth, st.offsetWidth * factor + PAD_X * 2)}px`;
-			resizing.timer = window.setTimeout(settle, 150);
+			if (width && el.clientWidth !== width && st && !frozenRef.current && !live.current) {
+				const s = scaleRef.current;
+				const sx = el.clientWidth / 2;
+				const sy = el.clientHeight / 2;
+				anchor.current = {
+					x: (el.scrollLeft + sx - st.offsetLeft) / s,
+					y: (el.scrollTop + sy - st.offsetTop) / s,
+					sx,
+					sy,
+				};
+				moved();
+			}
+			width = el.clientWidth;
+			setBoxWidth(width);
 		});
 		ro.observe(el);
-		return () => {
-			ro.disconnect();
-			if (resizing) clearTimeout(resizing.timer);
-		};
-	}, []);
+		return () => ro.disconnect();
+	}, [moved]);
+
+	// Pages near the view hold bitmaps. The margin draws the next page before it scrolls in.
+	const [near, setNear] = useState<ReadonlySet<number>>(() => new Set());
+	const pageCount = state.pages.length;
+	const rendered = state.styles !== null;
+	useEffect(() => {
+		const root = scroller.current;
+		const st = stage.current;
+		// New sheets need observing whenever the page count changes.
+		if (!root || !st || !rendered || !pageCount) return;
+		const io = new IntersectionObserver(
+			(entries) =>
+				setNear((prev) => {
+					const next = new Set(prev);
+					for (const e of entries) {
+						const i = Number((e.target as HTMLElement).dataset.page);
+						if (e.isIntersecting) next.add(i);
+						else next.delete(i);
+					}
+					return next;
+				}),
+			{ root, rootMargin: "100% 0px" },
+		);
+		for (const sheet of st.querySelectorAll(".sheet")) io.observe(sheet);
+		return () => io.disconnect();
+	}, [pageCount, rendered]);
 
 	// Trackpad pinch arrives as ctrl+wheel. Safari also sends gesture events. Touch screens pinch with two fingers.
 	useEffect(() => {
@@ -270,21 +295,31 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 		};
 	}, [zoomAt]);
 
-	// Broadcast where our viewport sits, so others can follow us.
+	// Broadcast where our viewport sits, so others can follow us. Every broadcast re-renders the
+	// workspace, so it waits out a moving view and sends at most a few times a second.
 	useEffect(() => {
 		const el = scroller.current;
 		if (!el) return;
-		let frame = 0;
+		let timer = 0;
+		let sent: number | undefined;
+		const send = () => {
+			timer = 0;
+			if (el.classList.contains("moving")) {
+				timer = window.setTimeout(send, PRESENCE_MS);
+				return;
+			}
+			const y = (el.scrollTop + el.clientHeight / 2) / scaleRef.current;
+			if (sent !== undefined && Math.abs(y - sent) < 1) return;
+			sent = y;
+			room.setPresence({ view: { y } });
+		};
 		const onScroll = () => {
-			cancelAnimationFrame(frame);
-			frame = requestAnimationFrame(() => {
-				room.setPresence({ view: { y: (el.scrollTop + el.clientHeight / 2) / scaleRef.current } });
-			});
+			if (!timer) timer = window.setTimeout(send, PRESENCE_MS);
 		};
 		el.addEventListener("scroll", onScroll, { passive: true });
 		return () => {
 			el.removeEventListener("scroll", onScroll);
-			cancelAnimationFrame(frame);
+			clearTimeout(timer);
 		};
 	}, [room]);
 
@@ -413,10 +448,9 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 			)}
 
 			<div className="preview-scroll" ref={scroller}>
-				{state.defs ? (
+				{state.styles ? (
 					// An explicit width: max-content would make the browser measure every text-layer element on each resize.
 					<div
-						ref={page}
 						style={{
 							width: Math.max(boxWidth, state.width * scale + PAD_X * 2),
 							padding: `20px ${PAD_X}px 60px`,
@@ -434,17 +468,30 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 							<div className="doc">
 								{state.pages.map((p, i) => (
 									<div
-										// By position, so a page whose markup is unchanged after a recompile is left alone.
+										// By position, so a page unchanged by a recompile is left alone.
 										// biome-ignore lint/suspicious/noArrayIndexKey: pages have no identity beyond their place
 										key={i}
+										data-page={i}
 										className="sheet"
 										style={{ top: p.top * scale, width: p.width * scale, height: p.height * scale }}
-										// biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced by the Typst renderer from the project's own source
-										dangerouslySetInnerHTML={{ __html: p.svg }}
-									/>
+									>
+										<PageCanvas
+											image={p.image}
+											width={p.width}
+											height={p.height}
+											density={resolution(p.width, p.height, scale)}
+											near={near.has(i)}
+											moving={moving}
+										/>
+										<div
+											className="page-text"
+											// biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced by the Typst renderer from the project's own source
+											dangerouslySetInnerHTML={{ __html: p.text }}
+										/>
+									</div>
 								))}
-								{/* biome-ignore lint/security/noDangerouslySetInnerHtml: SVG produced by the Typst renderer from the project's own source */}
-								<div className="defs" dangerouslySetInnerHTML={{ __html: state.defs }} />
+								{/* biome-ignore lint/security/noDangerouslySetInnerHtml: typst.ts's own stylesheet for its text layer */}
+								<div className="typst-sheet" dangerouslySetInnerHTML={{ __html: state.styles }} />
 							</div>
 							{flash && (
 								<div

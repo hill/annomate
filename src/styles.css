@@ -882,8 +882,6 @@ textarea.field {
 
 .panes.dragging {
 	transition: none;
-	cursor: col-resize;
-	user-select: none;
 }
 
 /* A drag locks each pane's content to its width at the start, set inline, so the drag only clips them. */
@@ -915,6 +913,13 @@ textarea.field {
 	position: absolute;
 	inset: 0 -4px;
 	cursor: col-resize;
+}
+
+/* While dragging, the gutter's hit area covers the window, so the cursor holds wherever the pointer goes.
+   Setting cursor on the panes instead would restyle everything inside them, since cursor inherits. */
+.gutter.dragging::before {
+	position: fixed;
+	inset: 0;
 }
 
 .gutter:hover,
@@ -1255,18 +1260,31 @@ textarea.field {
 	content-visibility: auto;
 }
 
-.stage {
-	will-change: transform;
-}
-
 .stage .doc {
 	position: absolute;
 	inset: 0;
 	contain: strict;
 }
 
-/* Each page's SVG keeps typst.ts's class typst-doc, so pin its box against any other rule using that name. */
-.stage .sheet > svg {
+.sheet > canvas {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	pointer-events: none;
+}
+
+.page-text {
+	position: absolute;
+	inset: 0;
+}
+
+.preview-scroll.moving .page-text {
+	content-visibility: hidden;
+}
+
+/* The text layer's SVG keeps typst.ts's class typst-doc, so pin its box against any other rule using that name. */
+.page-text > svg {
 	display: block;
 	width: 100%;
 	max-width: none;
@@ -1275,17 +1293,11 @@ textarea.field {
 	padding: 0;
 }
 
-/* Not display: none, which would stop some browsers resolving the references into it. */
-.stage .defs {
+.typst-sheet {
 	position: absolute;
 	width: 0;
 	height: 0;
 	overflow: hidden;
-}
-
-.stage .defs svg {
-	width: 0;
-	height: 0;
 }
 
 .sync-flash {

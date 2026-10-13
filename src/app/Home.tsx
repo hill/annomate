@@ -31,7 +31,6 @@ export function Home() {
 
 	return (
 		<SidebarFrame
-			collapsed={false}
 			sidebar={
 				<>
 					<div className="side-head" style={{ paddingLeft: 18 }}>

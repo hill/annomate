@@ -11,7 +11,6 @@ import {
 	MessageSquare,
 	MessageSquarePlus,
 	Minimize2,
-	PanelLeft,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Y from "yjs";
@@ -35,7 +34,15 @@ import { FileTree, joinPath, KEEP, parentOf, type Upload } from "./FileTree";
 import { localPatch } from "./localPatch";
 import { Wordmark } from "./Mark";
 import { GeneratedIcon, iconFromFile, ProjectIcon } from "./ProjectIcon";
-import { GitSection, PeopleSection, SidebarFrame, SideFoot, SideHead } from "./Sidebar";
+import {
+	GitSection,
+	PeopleSection,
+	SidebarButton,
+	SidebarFrame,
+	SideFoot,
+	SideHead,
+} from "./Sidebar";
+import { useStored } from "./stored";
 
 type ProjectWithMembers = Project & { members: Member[] };
 
@@ -102,23 +109,6 @@ function useDocVersion(doc: Y.Doc) {
 	);
 }
 
-function useStored<T>(key: string, initial: T) {
-	const [value, setValue] = useState<T>(() => {
-		try {
-			const raw = localStorage.getItem(key);
-			return raw === null ? initial : (JSON.parse(raw) as T);
-		} catch {
-			return initial;
-		}
-	});
-	useEffect(() => {
-		try {
-			localStorage.setItem(key, JSON.stringify(value));
-		} catch {}
-	}, [key, value]);
-	return [value, setValue] as const;
-}
-
 const IMAGE = /\.(png|jpe?g|gif|webp|svg)$/i;
 
 /** Folder names that, beside the open file, take its dropped and pasted images. */
@@ -168,7 +158,6 @@ function Workspace({
 	const [draft, setDraft] = useState<(Draft & { from: number; to: number }) | null>(null);
 	const [following, setFollowing] = useState<number | null>(null);
 	const [drawer, setDrawer] = useState<"commit" | "share" | "history" | "settings" | null>(null);
-	const [collapsed, setCollapsed] = useStored("am:sidebar-collapsed", false);
 	const [railOpen, setRailOpen] = useStored("am:rail-open", false);
 	const [left, setLeft] = useStored("am:left-pane", 560);
 	const [layout, setLayout] = useStored<Layout>("am:layout", "split");
@@ -226,12 +215,12 @@ function Workspace({
 	// Keep the project grid's first-page thumbnail fresh: once soon after opening, then at most every two minutes.
 	useEffect(() => {
 		if (!engine) return;
-		let lastPage: string | null = null;
+		let lastPage: HTMLImageElement | null = null;
 		let lastSaved = 0;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		const unsubscribe = engine.subscribe(() => {
 			const { pages, phase } = engine.getState();
-			const first = pages[0]?.svg;
+			const first = pages[0]?.image;
 			if (phase !== "ready" || !first || first === lastPage) return;
 			lastPage = first;
 			clearTimeout(timer);
@@ -518,14 +507,10 @@ function Workspace({
 
 	return (
 		<SidebarFrame
-			collapsed={collapsed}
+			storageKey="am:sidebar-collapsed"
 			sidebar={
 				<>
-					<SideHead
-						project={project}
-						onCollapse={() => setCollapsed(true)}
-						onSettings={() => setDrawer("settings")}
-					/>
+					<SideHead project={project} onSettings={() => setDrawer("settings")} />
 					<div className="side-scroll">
 						<FileTree
 							files={files}
@@ -563,16 +548,7 @@ function Workspace({
 		>
 			<div className="main">
 				<header className="topbar">
-					{collapsed && (
-						<button
-							type="button"
-							className="btn ghost icon"
-							aria-label="Show sidebar"
-							onClick={() => setCollapsed(false)}
-						>
-							<PanelLeft size={16} />
-						</button>
-					)}
+					<SidebarButton show />
 					<div className="crumbs">
 						<a
 							className="dim"
@@ -935,6 +911,8 @@ function Gutter({
 		<div
 			className={`gutter${active ? " dragging" : ""}`}
 			onPointerDown={(e) => {
+				// Keeps the drag from starting a text selection.
+				e.preventDefault();
 				e.currentTarget.setPointerCapture(e.pointerId);
 				drag.current = { startX: e.clientX, startW: width, w: width };
 				setActive(true);

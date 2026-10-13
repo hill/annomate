@@ -57,6 +57,7 @@ export function Rail(props: Props) {
 	const [connecting, setConnecting] = useState(false);
 	const visible = threads.filter((t) => t.resolved === (tab === "resolved"));
 	const openCount = threads.filter((t) => !t.resolved).length;
+	const resolvedCount = threads.length - openCount;
 	// Selecting a thread shows its tab. Resolving it later leaves the tab where it is.
 	const lookup = useRef(threads);
 	lookup.current = threads;
@@ -100,7 +101,7 @@ export function Rail(props: Props) {
 						aria-selected={tab === "resolved"}
 						onClick={() => setTab("resolved")}
 					>
-						Resolved
+						Resolved{resolvedCount > 0 && ` ${resolvedCount}`}
 					</button>
 				</div>
 				{props.git && (
