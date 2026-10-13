@@ -105,6 +105,7 @@ test("an agent connects through OAuth and lists its tools", async ({ page }) => 
 		const client = await mcp(access_token, mode);
 		const { tools } = await client.listTools();
 		expect(tools.map((t) => t.name).sort()).toEqual([
+			"create_thread",
 			"get_comments",
 			"get_thread",
 			"list_projects",
@@ -112,6 +113,7 @@ test("an agent connects through OAuth and lists its tools", async ({ page }) => 
 			"resolve_thread",
 		]);
 		expect(client.getInstructions()).toContain("get_comments");
+		expect(client.getInstructions()).toContain("create_thread");
 		const missing = await client.callTool({
 			name: "get_comments",
 			arguments: { project: "nobody/nothing" },
@@ -142,7 +144,7 @@ test("a read-only connection cannot reply", async ({ page }) => {
 		arguments: { project: "x/y", thread_id: "t", body: "hi" },
 	});
 	expect(result.isError).toBe(true);
-	expect(textOf(result)).toContain("can read comments but not reply");
+	expect(textOf(result)).toContain("can read comments but not write them");
 	await client.close();
 });
 
@@ -214,6 +216,60 @@ test.describe("with a project", () => {
 		await page.getByRole("tab", { name: "Resolved" }).click();
 		await expect(page.getByText("Expanded.")).toBeVisible();
 		await expect(page.getByText("via Test agent")).toBeVisible();
+		await client.close();
+		expect((await page.request.delete(`/api/projects/${project.id}`)).ok()).toBeTruthy();
+	});
+
+	test("an agent starts a thread on a quoted passage, and it appears live", async ({ page }) => {
+		await page.goto("/auth/dev?login=erin&id=9011&name=Erin");
+		await clearProjects(page.request, REPO as string);
+		const created = await page.request.post("/api/projects", { data: { repo: REPO } });
+		expect(created.ok(), await created.text()).toBeTruthy();
+		const project = await created.json();
+
+		await page.goto(`/p/${project.id}`);
+		const line = page
+			.locator(".cm-line")
+			.filter({ hasText: /\w{4,}.*\w{4,}/ })
+			.first();
+		await expect(line).toBeVisible({ timeout: 60_000 });
+		const words = ((await line.innerText()).match(/\S+/g) ?? []).slice(0, 3).join(" ");
+		const show = page.getByRole("button", { name: "Show comments" });
+		if (await show.isVisible()) await show.click();
+
+		const { access_token } = await connect(page, page.request);
+		const client = await mcp(access_token);
+
+		const missing = await client.callTool({
+			name: "create_thread",
+			arguments: {
+				project: REPO as string,
+				quote: "words that are nowhere in this file",
+				body: "x",
+			},
+		});
+		expect(missing.isError).toBe(true);
+		expect(textOf(missing)).toContain("not in the file");
+
+		const result = await client.callTool({
+			name: "create_thread",
+			arguments: { project: REPO as string, quote: words, body: "Could this be clearer?" },
+		});
+		expect(result.isError, textOf(result)).toBeFalsy();
+		expect(textOf(result)).toMatch(/Created thread `[^`]+` on .+:\d+/);
+
+		// The open page shows it without a reload, highlighted in the source and tagged with the agent.
+		await expect(page.locator(".thread .comment-body")).toHaveText("Could this be clearer?");
+		await expect(page.getByText("via Test agent")).toBeVisible();
+		await expect
+			.poll(async () => (await page.locator(".cm-comment-mark").allInnerTexts()).join(""))
+			.toContain(words);
+
+		// It reads back like any other thread.
+		const report = textOf(
+			await client.callTool({ name: "get_comments", arguments: { project: REPO as string } }),
+		);
+		expect(report).toContain("Could this be clearer?");
 		await client.close();
 		expect((await page.request.delete(`/api/projects/${project.id}`)).ok()).toBeTruthy();
 	});

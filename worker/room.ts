@@ -4,8 +4,16 @@ import * as encoding from "lib0/encoding";
 import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
-import { applyMinimalDiff, livePositions, merge3, reattach, resolveAnchor } from "../shared/anchor";
+import {
+	applyMinimalDiff,
+	createAnchor,
+	livePositions,
+	merge3,
+	reattach,
+	resolveAnchor,
+} from "../shared/anchor";
 import { buildReport, type Report, type ReportOptions } from "../shared/commentReport";
+import { locatePassage } from "../shared/locate";
 import {
 	type ClientMessage,
 	type Comment,
@@ -169,6 +177,52 @@ export class ProjectRoom extends DurableObject<Env> {
 		);
 		this.publish(threadId);
 		return this.thread(threadId);
+	}
+
+	/**
+	 * Start a thread on a passage, named by its text and/or line as the agent sees it. The anchor
+	 * is built from the live text, the same as a comment made in the browser.
+	 */
+	async agentCreateThread(
+		user: User,
+		config: ProjectConfig,
+		target: { file?: string; quote?: string; line?: number },
+		body: string,
+		via: string,
+	): Promise<{ thread: Thread; line: number } | { error: string }> {
+		await this.prepare(user, config);
+		if (!body.trim()) return { error: "The comment is empty." };
+		const file = target.file?.replace(/^\/+/, "") || this.config.mainFile;
+		const text = this.files.get(file);
+		if (!text) {
+			const known = [...this.files.keys()].filter((p) => !p.endsWith(".gitkeep")).sort();
+			return { error: `No file ${file} in this project. Files: ${known.join(", ")}` };
+		}
+		const place = locatePassage(text.toString(), target);
+		if ("error" in place) return place;
+
+		const id = crypto.randomUUID();
+		const now = Date.now();
+		const anchor = createAnchor(text, file, place.from, place.to, this.meta("base_sha") ?? "");
+		this.sql.exec(
+			"INSERT INTO threads (id, anchor, author, created_at) VALUES (?, ?, ?, ?)",
+			id,
+			JSON.stringify(anchor),
+			JSON.stringify(user),
+			now,
+		);
+		this.sql.exec(
+			"INSERT INTO comments (id, thread_id, author, body, created_at, via) VALUES (?, ?, ?, ?, ?, ?)",
+			`${id}-0`,
+			id,
+			JSON.stringify(user),
+			body.trim(),
+			now,
+			via,
+		);
+		this.publish(id);
+		const thread = this.thread(id);
+		return thread ? { thread, line: anchor.line } : { error: "The thread could not be saved." };
 	}
 
 	async agentResolve(

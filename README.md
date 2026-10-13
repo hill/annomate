@@ -9,7 +9,7 @@ Collaborative review for Typst projects that live on GitHub. Edit together in re
 - Comment threads that survive edits, moves and outside pushes. A comment whose text changed shows a word diff against the original.
 - Commit and pull from the app, with a diff of what you are about to push and a graph of the repo's history.
 - A file tree with folders, drag and drop, and uploads for images and fonts.
-- Coding agents can read and answer comments over MCP.
+- Coding agents can read, add and answer comments over MCP.
 
 ## How comments stay put
 
@@ -19,7 +19,7 @@ A pull merges upstream changes three ways and writes them in as a minimal diff, 
 
 ## Coding agents
 
-Claude Code, Codex, Cursor and other MCP clients can list, read, reply to and resolve comments. The comments pane has the setup command for each. For Claude Code:
+Claude Code, Codex, Cursor and other MCP clients can read, add, reply to and resolve comments. An agent starts a thread by quoting the passage it means, so the comment lands in the right place even when its checkout is behind annomate's live text. The comments pane has the setup command for each. For Claude Code:
 
 ```sh
 claude mcp add --transport http annomate https://annomate.hill.xyz/mcp

@@ -8,13 +8,15 @@ import type { Env } from "../env";
 import { type MemberProject, memberProjects, room, roomConfig } from "../projects";
 import { type AgentProps, WRITE } from "./oauth";
 
-const INSTRUCTIONS = `annomate is where people review Typst documents kept in GitHub repos. They leave comments on passages, and this server lets you read and answer them.
+const INSTRUCTIONS = `annomate is where people review Typst documents kept in GitHub repos. They leave comments on passages, and this server lets you read, answer and add them.
 
 To work through a project's comments:
 1. Find the project from the repo you are in: pass its GitHub owner/name (from \`git remote get-url origin\`) as \`project\`, or call list_projects.
 2. Call get_comments. Each thread gives the file, line, the commented text, the lines around it and the conversation.
 3. Make the changes in your checkout. annomate's live text can be ahead of your checkout, so when a line number does not match, search for the quoted text.
 4. Answer each thread you handled with reply_to_thread, or resolve_thread with a short note of what changed.
+
+To review a document yourself, call create_thread for each point. Quote the passage you mean, as it appears in the file, and add its line when the same words appear more than once. The comment appears in annomate at once, under the person's name, marked as yours.
 
 annomate does not see your local edits. Push your commits to the project's branch, then someone pulls them in annomate.`;
 
@@ -152,6 +154,54 @@ function server(agent: Agent): McpServer {
 	);
 
 	mcp.registerTool(
+		"create_thread",
+		{
+			title: "Create thread",
+			description: `Start a new comment thread on a passage. It appears under your name, marked as written through ${agent.client}. Name the passage with quote, its exact text, and add line when those words appear more than once. Line alone comments on that whole line. Quote a short, distinctive passage: annomate's live text can be ahead of your checkout.`,
+			inputSchema: z.object({
+				project,
+				body: z.string().min(1).describe("The comment, in plain text."),
+				quote: z
+					.string()
+					.optional()
+					.describe(
+						"The exact text to comment on, as it appears in the file. Whitespace may differ.",
+					),
+				line: z
+					.number()
+					.int()
+					.min(1)
+					.optional()
+					.describe(
+						"The 1-based line of the passage. Picks between repeated quotes, or names a whole line on its own.",
+					),
+				file: z
+					.string()
+					.optional()
+					.describe("The file path in the repo. Defaults to the project's main file."),
+			}),
+			annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+		},
+		async ({ project, body, quote, line, file }) =>
+			writable(agent) ??
+			withProject(agent, project, async (p) => {
+				const created = await room(agent.env, p.id).agentCreateThread(
+					agent.user,
+					roomConfig(p),
+					{ file, quote, line },
+					body,
+					agent.client,
+				);
+				if ("error" in created) return failure(created.error);
+				const { thread } = created;
+				const excerpt = thread.anchor.quote.replace(/\s+/g, " ").slice(0, 80);
+				return text(
+					`Created thread \`${thread.id}\` on ${thread.anchor.file}:${created.line}, on "${excerpt}${thread.anchor.quote.length > 80 ? "…" : ""}". ${agent.origin}/p/${p.id}`,
+				);
+			}),
+	);
+
+	mcp.registerTool(
 		"resolve_thread",
 		{
 			title: "Resolve thread",
@@ -229,7 +279,7 @@ async function withProject(
 function writable(agent: Agent): CallToolResult | undefined {
 	if (agent.scopes.includes(WRITE)) return undefined;
 	return failure(
-		"This connection can read comments but not reply or resolve. Reconnect annomate and allow replying to change that.",
+		"This connection can read comments but not write them. Reconnect annomate and allow writing comments to change that.",
 	);
 }
 
