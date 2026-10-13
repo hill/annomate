@@ -8,6 +8,7 @@ import { GithubMark, githubUrl } from "../ui/GithubMark";
 import { Landing } from "./Landing";
 import { Wordmark } from "./Mark";
 import { ProjectIcon } from "./ProjectIcon";
+import { RepoPicker } from "./RepoPicker";
 import { SidebarFrame, SideFoot } from "./Sidebar";
 
 export function Home() {
@@ -135,7 +136,7 @@ function ProjectCard({ project: p }: { project: Project }) {
 }
 
 function NewProject({ onClose }: { onClose(): void }) {
-	const [repos, setRepos] = useState<Repo[]>([]);
+	const [repos, setRepos] = useState<Repo[] | null>(null);
 	const [repo, setRepo] = useState("");
 	const [branch, setBranch] = useState("");
 	const [mainFile, setMainFile] = useState("");
@@ -143,7 +144,7 @@ function NewProject({ onClose }: { onClose(): void }) {
 	const [error, setError] = useState("");
 
 	useEffect(() => {
-		api.repos().then(setRepos, () => {});
+		api.repos().then(setRepos, () => setRepos([]));
 	}, []);
 
 	async function submit(e?: FormEvent) {
@@ -184,24 +185,20 @@ function NewProject({ onClose }: { onClose(): void }) {
 					<label className="label" htmlFor="np-repo">
 						Repository
 					</label>
-					<input
+					<RepoPicker
 						id="np-repo"
-						className="field"
-						list="repos"
+						repos={repos}
 						value={repo}
-						onChange={(e) => {
-							setRepo(e.target.value);
-							const match = repos.find((r) => r.repo === e.target.value);
+						onChange={(value) => {
+							setRepo(value);
+							const match = repos?.find((r) => r.repo === value);
 							if (match) setBranch(match.branch);
 						}}
-						required
-						spellCheck={false}
+						onPick={(r) => {
+							setRepo(r.repo);
+							setBranch(r.branch);
+						}}
 					/>
-					<datalist id="repos">
-						{repos.map((r) => (
-							<option key={r.repo} value={r.repo} />
-						))}
-					</datalist>
 				</div>
 				<div className="form-row">
 					<label className="label" htmlFor="np-branch">

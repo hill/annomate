@@ -3071,6 +3071,37 @@ textarea.field {
 	height: 30px;
 }
 
+/* Repository picker */
+
+.combo {
+	position: relative;
+}
+
+.combo .field {
+	padding-right: 30px;
+}
+
+.combo-icon {
+	position: absolute;
+	top: 8px;
+	right: 10px;
+	color: var(--faint);
+	pointer-events: none;
+}
+
+.combo-menu {
+	top: calc(100% + 4px);
+	right: 0;
+	left: 0;
+	max-height: 288px;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.combo-menu .nav .grow .dim {
+	color: var(--muted);
+}
+
 .menu hr {
 	margin: 4px 0;
 	border: 0;
