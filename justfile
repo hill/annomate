@@ -22,7 +22,7 @@ db-migrate:
     bunx wrangler d1 migrations apply annomate --local
 
 db-migrate-remote:
-    bunx wrangler d1 migrations apply annomate --remote
+    bunx wrangler d1 migrations apply annomate --remote --env production
 
 # Generate the three secrets annomate needs, for .dev.vars or wrangler secret put
 secrets:
@@ -33,5 +33,6 @@ secrets:
 typst-docs:
     bun scripts/typst-docs.ts
 
+# Build for production and deploy to annomate.hill.xyz
 deploy:
     bun run deploy

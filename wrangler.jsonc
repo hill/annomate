@@ -33,6 +33,29 @@
 	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["ProjectRoom"] }],
 	"vars": {
 		"GITHUB_CLIENT_ID": ""
+	},
+	// The top level is local development. Deploys build with CLOUDFLARE_ENV=production.
+	// Bindings and vars do not inherit, so production repeats them with real IDs.
+	"env": {
+		"production": {
+			"name": "annomate",
+			"routes": [{ "pattern": "annomate.hill.xyz", "custom_domain": true }],
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "annomate",
+					"database_id": "1462cfd9-7446-40f0-b3fe-ae9e090ea2ff",
+					"migrations_dir": "worker/migrations"
+				}
+			],
+			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "d9e2141a00624a929fd6c1f4ed654d87" }],
+			"durable_objects": {
+				"bindings": [{ "name": "ROOM", "class_name": "ProjectRoom" }]
+			},
+			"vars": {
+				"GITHUB_CLIENT_ID": "Ov23liSqzC3EZcKjRedc"
+			}
+		}
 	}
 	// Secrets: GITHUB_CLIENT_SECRET, SESSION_SECRET, TOKEN_KEY (wrangler secret put, or .dev.vars locally)
 }

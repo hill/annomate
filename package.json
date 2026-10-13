@@ -7,7 +7,7 @@
 		"dev": "vite",
 		"build": "tsc -b && vite build",
 		"preview": "vite preview",
-		"deploy": "bun run build && wrangler deploy",
+		"deploy": "CLOUDFLARE_ENV=production bun run build && wrangler deploy",
 		"test": "vitest run",
 		"lint": "biome check --write .",
 		"typegen": "wrangler types worker/env.d.ts"
