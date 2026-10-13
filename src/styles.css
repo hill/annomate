@@ -1262,6 +1262,70 @@ textarea.field {
 	contain: strict;
 }
 
+.compiling {
+	animation: compiling 1.2s var(--ease) infinite alternate;
+}
+
+@keyframes compiling {
+	to {
+		opacity: 0.4;
+	}
+}
+
+/* PDF pages, drawn by pdf.js for LaTeX projects. The text layer is invisible selectable text,
+   the same job typst.ts's .tsel elements do. */
+.pdf-page {
+	position: absolute;
+	left: 0;
+	overflow: hidden;
+}
+
+.pdf-page canvas {
+	position: absolute;
+	inset: 0;
+	display: block;
+}
+
+.pdf-page .textLayer {
+	position: absolute;
+	inset: 0;
+	overflow: clip;
+	line-height: 1;
+	text-size-adjust: none;
+	forced-color-adjust: none;
+	transform-origin: 0 0;
+	--min-font-size: 1;
+	--text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+	--min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.pdf-page .textLayer :is(span, br) {
+	position: absolute;
+	color: transparent;
+	white-space: pre;
+	cursor: text;
+	transform-origin: 0% 0%;
+	user-select: text;
+}
+
+.pdf-page .textLayer > :not(.markedContent),
+.pdf-page .textLayer .markedContent span:not(.markedContent) {
+	--font-height: 0;
+	--scale-x: 1;
+	--rotate: 0deg;
+	font-size: calc(var(--text-scale-factor) * var(--font-height));
+	transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.pdf-page .textLayer .markedContent {
+	display: contents;
+}
+
+.pdf-page .textLayer ::selection {
+	background: color-mix(in srgb, var(--accent) 30%, transparent);
+	color: transparent;
+}
+
 /* typst.ts gives the page SVG the class typst-doc, so pin its box against any other rule using that name. */
 .stage .doc svg {
 	display: block;

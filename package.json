@@ -13,6 +13,7 @@
 		"typegen": "wrangler types worker/env.d.ts"
 	},
 	"dependencies": {
+		"@cloudflare/containers": "^0.3.7",
 		"@cloudflare/workers-oauth-provider": "^1.2.3",
 		"@codemirror/autocomplete": "^6.20.3",
 		"@codemirror/commands": "^6.11.1",
@@ -33,6 +34,7 @@
 		"hono": "^4.13.13",
 		"lib0": "^0.2.119",
 		"lucide-react": "^1.55.0",
+		"pdfjs-dist": "^6.4.299",
 		"react": "^19.3.0",
 		"react-dom": "^19.3.0",
 		"y-codemirror.next": "^0.3.6",

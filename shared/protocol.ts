@@ -29,6 +29,19 @@ export interface Thread {
 	comments: Comment[];
 }
 
+/** A compiler message, located by zero-based line and column in a project file. */
+export interface Diagnostic {
+	/** Project-relative path, or empty when the compiler named no file. */
+	path: string;
+	severity: "error" | "warning" | "info";
+	message: string;
+	/** Null when the compiler gave no position. */
+	line: number | null;
+	column: number;
+	endLine: number | null;
+	endColumn: number;
+}
+
 export interface GitState {
 	repo: string;
 	branch: string;
@@ -52,7 +65,8 @@ export type ClientMessage =
 	| { t: "comment.delete"; id: string }
 	| { t: "file.move"; from: string; to: string }
 	| { t: "git.pull" }
-	| { t: "git.commit"; message: string };
+	| { t: "git.commit"; message: string }
+	| { t: "tex.compile" };
 
 export type ServerMessage =
 	| { t: "hello"; me: User; threads: Thread[]; git: GitState }
@@ -60,7 +74,20 @@ export type ServerMessage =
 	| { t: "thread.remove"; id: string }
 	| { t: "git.state"; git: GitState }
 	| { t: "git.result"; op: "pull" | "commit"; ok: boolean; message: string; by: User; sha?: string }
+	| { t: "tex.result"; result: TexResult }
+	| { t: "tex.state"; busy: boolean }
 	| { t: "error"; message: string };
+
+/** The latest LaTeX compile. A LaTeX project compiles on the server, so everyone shares it. */
+export interface TexResult {
+	/** Counts compiles, so clients know a result is new. */
+	n: number;
+	ok: boolean;
+	ms: number;
+	diagnostics: Diagnostic[];
+	/** The compile whose PDF is stored: this one, or the last that produced a PDF. */
+	pdf: number | null;
+}
 
 /** What each client publishes through Yjs awareness. */
 export interface Presence {

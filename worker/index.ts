@@ -23,6 +23,7 @@ import {
 } from "./projects";
 
 export { ProjectRoom } from "./room";
+export { TexBox } from "./tex/box";
 
 type App = { Bindings: Env; Variables: { user: User } };
 
@@ -248,6 +249,21 @@ app.delete("/api/projects/:id/members/:login", async (c) => {
 		.bind(project.id, c.req.param("login"))
 		.run();
 	return c.json({ ok: true });
+});
+
+/** A LaTeX project's compiled PDF or SyncTeX data. A compile number names one output for good. */
+app.get("/api/projects/:id/tex/:n/:kind{pdf|synctex}", async (c) => {
+	const project = await membership(c.env, c.req.param("id"), c.get("user").login);
+	if (!project) return c.json({ error: "Not found" }, 404);
+	const kind = c.req.param("kind") as "pdf" | "synctex";
+	const data = await room(c.env, project.id).texFile(kind, Number(c.req.param("n")));
+	if (!data) return c.json({ error: "Not found" }, 404);
+	return new Response(data, {
+		headers: {
+			"Content-Type": kind === "pdf" ? "application/pdf" : "application/gzip",
+			"Cache-Control": "private, max-age=31536000, immutable",
+		},
+	});
 });
 
 app.get("/api/projects/:id/history", async (c) => {

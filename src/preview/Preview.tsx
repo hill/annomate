@@ -336,10 +336,19 @@ export const Preview = forwardRef<PreviewHandle, Props>(function Preview(
 					</button>
 				)}
 				<span className="spacer" />
-				{state.phase === "ready" && state.compileMs > 0 && (
-					<span className="small muted" style={{ marginRight: 8 }}>
-						{Math.round(state.compileMs)} ms
+				{state.busy ? (
+					<span className="small muted compiling" style={{ marginRight: 8 }}>
+						Compiling
 					</span>
+				) : (
+					state.phase === "ready" &&
+					state.compileMs > 0 && (
+						<span className="small muted" style={{ marginRight: 8 }}>
+							{state.compileMs >= 1000
+								? `${(state.compileMs / 1000).toFixed(1)} s`
+								: `${Math.round(state.compileMs)} ms`}
+						</span>
+					)
 				)}
 				<div className="zoom">
 					<button

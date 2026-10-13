@@ -11,6 +11,7 @@ import {
 	MSG_SYNC,
 	type Presence,
 	type ServerMessage,
+	type TexResult,
 	type Thread,
 	type User,
 } from "../../shared/protocol";
@@ -28,6 +29,9 @@ interface Snapshot {
 	me: User | null;
 	threads: Thread[];
 	git: GitState | null;
+	/** The latest server-side compile of a LaTeX project. */
+	tex: TexResult | null;
+	texBusy: boolean;
 	toasts: Toast[];
 }
 
@@ -48,7 +52,15 @@ export class Room {
 	private closed = false;
 	private listeners = new Set<() => void>();
 	private toastId = 0;
-	private state: Snapshot = { status: "connecting", me: null, threads: [], git: null, toasts: [] };
+	private state: Snapshot = {
+		status: "connecting",
+		me: null,
+		threads: [],
+		git: null,
+		tex: null,
+		texBusy: false,
+		toasts: [],
+	};
 	/** Copied on every change, because awareness mutates one Map in place. */
 	private presence = new Map<number, Presence>();
 
@@ -158,6 +170,10 @@ export class Room {
 				return this.set({ threads: this.state.threads.filter((t) => t.id !== msg.id) });
 			case "git.state":
 				return this.set({ git: msg.git });
+			case "tex.result":
+				return this.set({ tex: msg.result });
+			case "tex.state":
+				return this.set({ texBusy: msg.busy });
 			case "git.result": {
 				const who = msg.by.id === this.state.me?.id ? "" : `${msg.by.name}: `;
 				return this.toast(`${who}${msg.message}`, msg.ok ? "ok" : "error");

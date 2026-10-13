@@ -1,8 +1,11 @@
 import type { ProjectRoom } from "./room";
+import type { TexBox } from "./tex/box";
 
 export interface Env {
 	DB: D1Database;
 	ROOM: DurableObjectNamespace<ProjectRoom>;
+	/** TeX Live containers that compile LaTeX projects, one per project. */
+	TEX: DurableObjectNamespace<TexBox>;
 	ASSETS: Fetcher;
 	GITHUB_CLIENT_ID: string;
 	GITHUB_CLIENT_SECRET: string;

@@ -1,15 +1,6 @@
-/** A compiler message, located by zero-based line and column in a project file. */
-export interface Diagnostic {
-	/** Project-relative path, or empty when the compiler named no file. */
-	path: string;
-	severity: "error" | "warning" | "info";
-	message: string;
-	/** Null when the compiler gave no position. */
-	line: number | null;
-	column: number;
-	endLine: number | null;
-	endColumn: number;
-}
+import type { Diagnostic } from "../../shared/protocol";
+
+export type { Diagnostic };
 
 export interface Page {
 	top: number;
@@ -27,6 +18,8 @@ export interface EngineState {
 	compileMs: number;
 	/** Bumps on every successful render, so views know to redraw. */
 	version: number;
+	/** A compile is running somewhere other than this tab, as LaTeX's does on the server. */
+	busy?: boolean;
 	error?: string;
 }
 

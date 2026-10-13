@@ -28,9 +28,19 @@
 	],
 	"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "local" }],
 	"durable_objects": {
-		"bindings": [{ "name": "ROOM", "class_name": "ProjectRoom" }]
+		"bindings": [
+			{ "name": "ROOM", "class_name": "ProjectRoom" },
+			{ "name": "TEX", "class_name": "TexBox" }
+		]
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["ProjectRoom"] }],
+	// LaTeX projects compile in TeX Live, one container per project.
+	"containers": [
+		{ "class_name": "TexBox", "image": "./container/Dockerfile", "instance_type": "standard-1", "max_instances": 20 }
+	],
+	"migrations": [
+		{ "tag": "v1", "new_sqlite_classes": ["ProjectRoom"] },
+		{ "tag": "v2", "new_sqlite_classes": ["TexBox"] }
+	],
 	"vars": {
 		"GITHUB_CLIENT_ID": ""
 	},
@@ -50,8 +60,19 @@
 			],
 			"kv_namespaces": [{ "binding": "OAUTH_KV", "id": "d9e2141a00624a929fd6c1f4ed654d87" }],
 			"durable_objects": {
-				"bindings": [{ "name": "ROOM", "class_name": "ProjectRoom" }]
+				"bindings": [
+					{ "name": "ROOM", "class_name": "ProjectRoom" },
+					{ "name": "TEX", "class_name": "TexBox" }
+				]
 			},
+			"containers": [
+				{
+					"class_name": "TexBox",
+					"image": "./container/Dockerfile",
+					"instance_type": "standard-1",
+					"max_instances": 20
+				}
+			],
 			"vars": {
 				"GITHUB_CLIENT_ID": "Ov23liSqzC3EZcKjRedc"
 			}

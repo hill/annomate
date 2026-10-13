@@ -10,16 +10,20 @@ import type { ProjectFormat } from "../shared/formats";
 import {
 	type ClientMessage,
 	type Comment,
+	type Diagnostic,
 	type GitState,
 	MSG_AWARENESS,
 	MSG_SYNC,
 	type ServerMessage,
+	type TexResult,
 	type Thread,
 	type User,
 } from "../shared/protocol";
 import { userToken } from "./auth";
 import type { Env } from "./env";
 import { GitHub, GitHubError, type Snapshot } from "./github";
+import { compileTex, engineFor, type TexFile, type TexOutput } from "./tex/compile";
+import { parseTexLog } from "./tex/log";
 
 export interface ProjectConfig {
 	id: string;
@@ -39,6 +43,16 @@ interface Attachment {
 /** Compact the update log into one snapshot once it grows past this. */
 const COMPACT_AFTER = 400;
 const MAX_TEXT_BYTES = 2_000_000;
+/** How long after the last edit a LaTeX project compiles. */
+const TEX_DEBOUNCE_MS = 1500;
+const TEX_CHUNK = 1_000_000;
+
+const utf8 = new TextEncoder();
+
+async function sha256(text: string): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", utf8.encode(text));
+	return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 /**
  * One room per project. Holds the shared Yjs document, relays presence, owns
@@ -74,6 +88,9 @@ export class ProjectRoom extends DurableObject<Env> {
 				body TEXT NOT NULL, created_at INTEGER NOT NULL, edited_at INTEGER
 			);
 			CREATE INDEX IF NOT EXISTS comments_by_thread ON comments(thread_id);
+			CREATE TABLE IF NOT EXISTS tex_output (
+				kind TEXT NOT NULL, seq INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY (kind, seq)
+			);
 		`);
 		const columns = this.sql.exec<{ name: string }>("PRAGMA table_info(comments)").toArray();
 		if (!columns.some((c) => c.name === "via"))
@@ -102,6 +119,7 @@ export class ProjectRoom extends DurableObject<Env> {
 			encoding.writeVarUint(encoder, MSG_SYNC);
 			syncProtocol.writeUpdate(encoder, update);
 			this.broadcastBinary(encoding.toUint8Array(encoder), origin);
+			this.scheduleTex();
 		});
 	}
 
@@ -240,6 +258,12 @@ export class ProjectRoom extends DurableObject<Env> {
 		}
 
 		this.send(server, { t: "hello", me: user, threads: this.threads(), git: this.gitState() });
+		if (config.format === "latex") {
+			const result = this.texResult();
+			if (result) this.send(server, { t: "tex.result", result });
+			if (this.tex.running) this.send(server, { t: "tex.state", busy: true });
+			else if (!result) this.scheduleTex();
+		}
 		return new Response(null, { status: 101, webSocket: client });
 	}
 
@@ -437,7 +461,175 @@ export class ProjectRoom extends DurableObject<Env> {
 				return this.runGit("pull", user, () => this.pull(user));
 			case "git.commit":
 				return this.runGit("commit", user, () => this.commit(user, msg.message));
+			case "tex.compile":
+				return this.runTex();
 		}
+	}
+
+	// LaTeX, compiled in the project's TeX Live container.
+
+	private tex = {
+		timer: null as ReturnType<typeof setTimeout> | null,
+		running: false,
+		again: false,
+		/** Path to hash of each file the container is believed to hold. */
+		known: new Map<string, string>(),
+	};
+
+	/** Compile shortly after the last edit, and only while someone is looking. */
+	private scheduleTex() {
+		if (this.config?.format !== "latex" || !this.ctx.getWebSockets().length) return;
+		clearTimeout(this.tex.timer);
+		this.tex.timer = setTimeout(() => void this.runTex(), TEX_DEBOUNCE_MS);
+	}
+
+	/** One compile at a time. Edits made during one bring exactly one more after it. */
+	private async runTex() {
+		clearTimeout(this.tex.timer);
+		if (this.tex.running) {
+			this.tex.again = true;
+			return;
+		}
+		const user = this.ctx
+			.getWebSockets()
+			.map((ws) => (ws.deserializeAttachment() as Attachment).user)[0];
+		if (!user) return;
+		this.tex.running = true;
+		this.broadcast({ t: "tex.state", busy: true });
+		try {
+			this.broadcast({ t: "tex.result", result: await this.compileTex(user) });
+		} catch (err) {
+			const { mainFile } = this.config;
+			const failure: Diagnostic = {
+				path: mainFile,
+				severity: "error",
+				message: describe(err),
+				line: null,
+				column: 0,
+				endLine: null,
+				endColumn: 0,
+			};
+			this.broadcast({
+				t: "tex.result",
+				result: this.storeTex({ ok: false, ms: 0, log: "" }, [failure]),
+			});
+		} finally {
+			this.tex.running = false;
+			this.broadcast({ t: "tex.state", busy: false });
+			if (this.tex.again) {
+				this.tex.again = false;
+				void this.runTex();
+			}
+		}
+	}
+
+	private async compileTex(user: User): Promise<TexResult> {
+		const { id, mainFile } = this.config;
+		const main = this.files.get(mainFile)?.toString();
+		if (main === undefined) throw new Error(`${mainFile} is not in the project`);
+		const files: TexFile[] = [];
+		for (const [path, text] of this.files) {
+			const content = text.toString();
+			files.push({ path, hash: await sha256(content), body: async () => utf8.encode(content) });
+		}
+		for (const [path, { sha }] of this.assets) {
+			files.push({ path, hash: `git:${sha}`, body: () => this.blob(user, sha) });
+		}
+		const { output, known } = await compileTex(
+			this.env.TEX.getByName(id),
+			{ project: id, main: mainFile, engine: engineFor(main) },
+			files,
+			this.tex.known,
+		);
+		this.tex.known = known;
+		const diagnostics = parseTexLog(output.log, mainFile, (p) => this.files.has(p));
+		if (output.error && !diagnostics.some((d) => d.severity === "error")) {
+			diagnostics.unshift({
+				path: mainFile,
+				severity: "error",
+				message: output.error,
+				line: null,
+				column: 0,
+				endLine: null,
+				endColumn: 0,
+			});
+		}
+		return this.storeTex(output, diagnostics);
+	}
+
+	/** A repo file by blob sha, from the shared cache the preview also fills, else from GitHub. */
+	private async blob(user: User, sha: string): Promise<Uint8Array> {
+		const key = new Request(`https://blob.annomate/${this.config.repo}/${sha}`);
+		const hit = await caches.default.match(key);
+		if (hit) return new Uint8Array(await hit.arrayBuffer());
+		const res = await (await this.github(user)).raw(sha);
+		if (!res.ok) throw new Error(`GitHub would not send a file (${res.status})`);
+		const data = new Uint8Array(await res.arrayBuffer());
+		await caches.default.put(
+			key,
+			new Response(data, { headers: { "Cache-Control": "public, max-age=31536000, immutable" } }),
+		);
+		return data;
+	}
+
+	/**
+	 * Keep the latest output. A compile that produced no PDF keeps the previous one, so the
+	 * preview still has a document to show beside the errors.
+	 */
+	private storeTex(output: TexOutput, diagnostics: Diagnostic[]): TexResult {
+		const n = Number(this.meta("tex_n") ?? 0) + 1;
+		const previous = this.texResult();
+		const result: TexResult = {
+			n,
+			ok: output.ok,
+			ms: output.ms,
+			diagnostics,
+			pdf: output.pdf ? n : (previous?.pdf ?? null),
+		};
+		this.ctx.storage.transactionSync(() => {
+			if (output.pdf) {
+				this.sql.exec("DELETE FROM tex_output");
+				for (const [kind, data] of [
+					["pdf", output.pdf],
+					["synctex", output.synctex],
+				] as const) {
+					if (!data) continue;
+					// SQLite rows hold at most 2 MB.
+					for (let seq = 0, at = 0; at < data.byteLength; seq++, at += TEX_CHUNK) {
+						this.sql.exec(
+							"INSERT INTO tex_output (kind, seq, data) VALUES (?, ?, ?)",
+							kind,
+							seq,
+							data.slice(at, at + TEX_CHUNK),
+						);
+					}
+				}
+			}
+			this.setMeta("tex_n", String(n));
+			this.setMeta("tex_result", JSON.stringify(result));
+		});
+		return result;
+	}
+
+	private texResult(): TexResult | null {
+		return JSON.parse(this.meta("tex_result") ?? "null");
+	}
+
+	/** The stored PDF or SyncTeX data, if `n` is the compile that made it. */
+	async texFile(kind: "pdf" | "synctex", n: number): Promise<ArrayBuffer | null> {
+		if (this.texResult()?.pdf !== n) return null;
+		const chunks = this.sql
+			.exec<{ data: ArrayBuffer }>("SELECT data FROM tex_output WHERE kind = ? ORDER BY seq", kind)
+			.toArray()
+			.map((r) => new Uint8Array(r.data));
+		if (!chunks.length) return null;
+		const out = new Uint8Array(chunks.reduce((sum, c) => sum + c.length, 0));
+		let at = 0;
+		for (const c of chunks) {
+			out.set(c, at);
+			at += c.length;
+		}
+		return out.buffer;
 	}
 
 	/**
