@@ -115,8 +115,30 @@ test("commit, then pull an outside push without losing the comment's place", asy
 		);
 	pushRemote(reordered, "Reorder and reword");
 
-	await page.getByRole("button", { name: "Pull" }).click();
+	// Committing now would build on a commit annomate has not seen, so it asks for a review first.
+	await page.getByRole("button", { name: /^Commit/ }).click();
+	await page.getByRole("button", { name: "Review 1 commit" }).click();
+
+	// The review shows the commit, how it meets the local edit, and what happens to the comment.
+	const drawer = page.locator(".drawer");
+	await expect(drawer.getByRole("heading", { name: "1 new commit" })).toBeVisible({
+		timeout: 30_000,
+	});
+	await expect(drawer.locator(".pull-commits")).toContainText("Reorder and reword");
+	await expect(drawer.locator(".pull-local")).toHaveText("Merges with edits made here");
+	await expect(drawer.locator(".pull-comments")).toContainText("Text changes");
+	await expect(drawer.locator(".pull-comments")).toContainText("We sampled 400");
+	await expect(page.getByRole("button", { name: /^Pull/ }).first().locator(".count")).toHaveText(
+		"1",
+	);
+
+	// Nothing has changed yet.
+	expect(await page.locator(".cm-content").innerText()).toContain("We sampled 400");
+	await page.getByRole("button", { name: "Pull 1 commit" }).click();
 	await expect(page.locator(".toast").last()).toContainText("Pulled", { timeout: 30_000 });
+	await expect(page.getByRole("button", { name: /^Pull/ }).first().locator(".count")).toHaveCount(
+		0,
+	);
 
 	const source = await page.locator(".cm-content").innerText();
 	expect(source).toContain("In short, Typst is a markup-based");
@@ -132,7 +154,7 @@ test("commit, then pull an outside push without losing the comment's place", asy
 	await expect(page.locator(".thread.active .diff")).toContainText("sampled");
 	await expect(page.locator(".thread.active .diff")).toContainText("recruited");
 
-	// Committing again folds the local introduction edit on top of the pulled commit.
+	// Committing again puts the local introduction edit on top of the pulled commit.
 	await page.getByRole("button", { name: /^Commit/ }).click();
 	await page.getByRole("button", { name: "Commit and push" }).click();
 	await expect(page.locator(".toast").last()).toContainText("Committed", { timeout: 30_000 });

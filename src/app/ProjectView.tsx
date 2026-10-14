@@ -33,9 +33,11 @@ import { Room, usePresence, useRoom } from "../room/provider";
 import { navigate } from "../router";
 import { Drawer } from "../ui/Drawer";
 import { GithubMark, githubUrl } from "../ui/GithubMark";
+import { AssetView } from "./AssetView";
 import { FileTree, joinPath, KEEP, parentOf, type Upload } from "./FileTree";
 import { Wordmark } from "./Mark";
 import { GeneratedIcon, iconFromFile, ProjectIcon } from "./ProjectIcon";
+import { PullDrawer } from "./PullDrawer";
 import {
 	GitSection,
 	PeopleSection,
@@ -111,8 +113,6 @@ function useDocVersion(doc: Y.Doc) {
 	);
 }
 
-const IMAGE = /\.(png|jpe?g|gif|webp|svg)$/i;
-
 /** Folder names that, beside the open file, take its dropped and pasted images. */
 const IMAGE_DIRS = ["images", "figures", "img", "assets"];
 
@@ -159,7 +159,9 @@ function Workspace({
 	const [active, setActive] = useState<string | null>(null);
 	const [draft, setDraft] = useState<(Draft & { from: number; to: number }) | null>(null);
 	const [following, setFollowing] = useState<number | null>(null);
-	const [drawer, setDrawer] = useState<"commit" | "share" | "history" | "settings" | null>(null);
+	const [drawer, setDrawer] = useState<"commit" | "pull" | "share" | "history" | "settings" | null>(
+		null,
+	);
 	const [railOpen, setRailOpen] = useStored("am:rail-open", false);
 	const [left, setLeft] = useStored("am:left-pane", 560);
 	const [layout, setLayout] = useStored<Layout>("am:layout", "split");
@@ -239,6 +241,17 @@ function Workspace({
 			unsubscribe();
 		};
 	}, [engine, project.id]);
+
+	// The room also checks every few minutes. Returning to the tab is when someone wants to know.
+	useEffect(() => {
+		const check = () => document.visibilityState === "visible" && room.send({ t: "git.check" });
+		addEventListener("focus", check);
+		document.addEventListener("visibilitychange", check);
+		return () => {
+			removeEventListener("focus", check);
+			document.removeEventListener("visibilitychange", check);
+		};
+	}, [room]);
 
 	useEffect(() => {
 		if (!me) return;
@@ -633,10 +646,16 @@ function Workspace({
 						type="button"
 						className="btn"
 						disabled={!!git?.busy}
-						onClick={() => room.send({ t: "git.pull" })}
+						title={
+							git?.upstream
+								? `${git.upstream.ahead} new commit${git.upstream.ahead === 1 ? "" : "s"} on ${git.branch}`
+								: undefined
+						}
+						onClick={() => setDrawer("pull")}
 					>
 						<ArrowDownToLine size={14} />
 						{git?.busy === "pull" ? "Pulling…" : "Pull"}
+						{!!git?.upstream?.ahead && <Count n={git.upstream.ahead} />}
 					</button>
 					<button type="button" className="btn" onClick={exportPdf}>
 						<Download size={14} />
@@ -718,10 +737,8 @@ function Workspace({
 								}
 								me={me}
 							/>
-						) : asset && IMAGE.test(currentFile) ? (
-							<div className="asset-view">
-								<img src={`/api/projects/${project.id}/blob/${asset.sha}`} alt={currentFile} />
-							</div>
+						) : asset ? (
+							<AssetView projectId={project.id} path={currentFile} asset={asset} />
 						) : (
 							<div className="empty">
 								{status === "live" ? (
@@ -729,7 +746,7 @@ function Workspace({
 										<div className="icon-tile">
 											<FileText size={18} />
 										</div>
-										<h3>{asset ? "Binary file" : "No such file"}</h3>
+										<h3>No such file</h3>
 									</div>
 								) : (
 									<div className="loader" />
@@ -803,6 +820,15 @@ function Workspace({
 				)}
 			</div>
 
+			{drawer === "pull" && (
+				<PullDrawer
+					room={room}
+					projectId={project.id}
+					repo={project.repo}
+					branch={git?.branch ?? project.branch}
+					onClose={() => setDrawer(null)}
+				/>
+			)}
 			{drawer === "commit" && (
 				<CommitDrawer
 					room={room}
@@ -810,6 +836,8 @@ function Workspace({
 					changed={changed}
 					repo={project.repo}
 					branch={git?.branch ?? project.branch}
+					behind={git?.upstream?.ahead ?? 0}
+					onPull={() => setDrawer("pull")}
 					onClose={() => setDrawer(null)}
 					onCommit={(message) => {
 						room.send({ t: "git.commit", message });
@@ -943,6 +971,8 @@ function CommitDrawer({
 	changed,
 	repo,
 	branch,
+	behind,
+	onPull,
 	onCommit,
 	onClose,
 }: {
@@ -951,6 +981,9 @@ function CommitDrawer({
 	changed: Set<string>;
 	repo: string;
 	branch: string;
+	/** Commits on the branch not yet pulled. Committing waits until they are. */
+	behind: number;
+	onPull(): void;
 	onCommit(message: string): void;
 	onClose(): void;
 }) {
@@ -1020,20 +1053,34 @@ function CommitDrawer({
 			footer={
 				<>
 					<span className="small muted" style={{ marginRight: "auto" }}>
-						Pushes to <span className="mono">{branch}</span> on {repo}. Changes pushed by others are
-						merged in first.
+						{behind > 0 ? (
+							<>
+								<span className="mono">{branch}</span> has {behind} new commit
+								{behind === 1 ? "" : "s"}. Review and pull them before committing.
+							</>
+						) : (
+							<>
+								Pushes to <span className="mono">{branch}</span> on {repo}.
+							</>
+						)}
 					</span>
 					<button type="button" className="btn" onClick={onClose}>
 						Cancel
 					</button>
-					<button
-						type="button"
-						className="btn primary"
-						disabled={!changed.size}
-						onClick={() => onCommit(message)}
-					>
-						Commit and push
-					</button>
+					{behind > 0 ? (
+						<button type="button" className="btn primary" onClick={onPull}>
+							Review {behind} commit{behind === 1 ? "" : "s"}
+						</button>
+					) : (
+						<button
+							type="button"
+							className="btn primary"
+							disabled={!changed.size}
+							onClick={() => onCommit(message)}
+						>
+							Commit and push
+						</button>
+					)}
 				</>
 			}
 		>
@@ -1060,7 +1107,7 @@ function CommitDrawer({
 							value={message}
 							onChange={(e) => setMessage(e.target.value)}
 							onKeyDown={(e) => {
-								if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) onCommit(message);
+								if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && !behind) onCommit(message);
 							}}
 						/>
 					</div>

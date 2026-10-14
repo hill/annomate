@@ -5,8 +5,10 @@ import * as awarenessProtocol from "y-protocols/awareness";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import {
+	type Anchor,
 	applyMinimalDiff,
 	createAnchor,
+	findQuote,
 	livePositions,
 	merge3,
 	reattach,
@@ -21,8 +23,11 @@ import {
 	type GitState,
 	MSG_AWARENESS,
 	MSG_SYNC,
+	type PullFile,
+	type PullPreview,
 	type ServerMessage,
 	type Thread,
+	type Upstream,
 	type User,
 } from "../shared/protocol";
 import { userToken } from "./auth";
@@ -50,6 +55,35 @@ interface Attachment {
 
 /** Compact the update log into one snapshot once it grows past this. */
 const COMPACT_AFTER = 400;
+/** How often an open project looks for new commits on its branch. */
+const CHECK_EVERY_MS = 2 * 60_000;
+/** A check a browser asks for, on focus, is skipped if one ran this recently. */
+const CHECK_MIN_MS = 20_000;
+
+/** A commit's files fetched for a pull: what changed since `base`, and what went away. */
+interface Incoming {
+	base: string;
+	head: string;
+	snap: Snapshot;
+	remote: Map<string, string>;
+	removed: string[];
+}
+
+/**
+ * Whether a comment on `from`..`to` of `ours` still finds its text once the file becomes
+ * `merged`: unchanged, changed but found, or gone. The pull itself re-finds comments the same way.
+ */
+function fate(ours: string, merged: string, from: number, to: number, anchor: Anchor) {
+	const prefix = ours.slice(Math.max(0, from - 32), from);
+	const suffix = ours.slice(to, to + 32);
+	const quote = ours.slice(from, to);
+	if (!quote) {
+		if (merged.includes(prefix + suffix)) return "kept";
+		return merged.includes(prefix) || merged.includes(suffix) ? "changed" : "lost";
+	}
+	if (merged.includes(prefix + quote + suffix) || merged.includes(quote)) return "kept";
+	return findQuote(merged, { ...anchor, quote, prefix, suffix }) ? "changed" : "lost";
+}
 const MAX_TEXT_BYTES = 2_000_000;
 
 /**
@@ -69,6 +103,9 @@ export class ProjectRoom extends DurableObject<Env> {
 	private baseAssets = this.doc.getMap<{ sha: string; size: number }>("baseAssets");
 	private busy: GitState["busy"] = null;
 	private seeding: Promise<void> | null = null;
+	/** What the last preview fetched, so confirming it does not fetch the same files again. */
+	private incomingCache: Incoming | null = null;
+	private checkedAt = 0;
 
 	constructor(ctx: DurableObjectState, env: Env) {
 		super(ctx, env);
@@ -151,7 +188,18 @@ export class ProjectRoom extends DurableObject<Env> {
 			baseSha: this.meta("base_sha") ?? "",
 			busy: this.busy,
 			lastSyncAt: Number(this.meta("last_sync") ?? 0),
+			upstream: this.upstream(),
 		};
+	}
+
+	/** The last check's view of the branch, if it still applies to the commit annomate is on. */
+	private upstream(): Upstream | null {
+		const stored: (Upstream & { base: string }) | null = JSON.parse(
+			this.meta("upstream") ?? "null",
+		);
+		if (!stored || stored.base !== this.meta("base_sha")) return null;
+		const { base: _, ...upstream } = stored;
+		return upstream;
 	}
 
 	/** Drop everything this room holds: document, comments and git state. */
@@ -409,7 +457,50 @@ export class ProjectRoom extends DurableObject<Env> {
 		}
 
 		this.send(server, { t: "hello", me: user, threads: this.threads(), git: this.gitState() });
+		this.ctx.waitUntil(this.checkUpstream(user, true));
+		if (!(await this.ctx.storage.getAlarm()))
+			await this.ctx.storage.setAlarm(Date.now() + CHECK_EVERY_MS);
 		return new Response(null, { status: 101, webSocket: client });
+	}
+
+	/** While anyone has the project open, look for new commits on the branch now and then. */
+	async alarm() {
+		const user = this.ctx
+			.getWebSockets()
+			.map((ws) => (ws.deserializeAttachment() as Attachment | null)?.user)
+			.find(Boolean);
+		if (!user) return;
+		await this.checkUpstream(user, true);
+		await this.ctx.storage.setAlarm(Date.now() + CHECK_EVERY_MS);
+	}
+
+	private recordUpstream(base: string, upstream: Upstream | null) {
+		if (this.meta("base_sha") !== base) return;
+		const before = JSON.stringify(this.upstream());
+		this.setMeta("upstream", JSON.stringify(upstream && { ...upstream, base }));
+		if (JSON.stringify(upstream) !== before)
+			this.broadcast({ t: "git.state", git: this.gitState() });
+	}
+
+	/** Count the branch's commits annomate has not pulled, and tell everyone if that changed. */
+	private async checkUpstream(user: User, force = false) {
+		const base = this.meta("base_sha");
+		if (!base || this.busy || (!force && Date.now() - this.checkedAt < CHECK_MIN_MS)) return;
+		this.checkedAt = Date.now();
+		try {
+			const gh = await this.github(user);
+			const head = await gh.head(this.config.branch);
+			let upstream: Upstream | null = null;
+			if (head !== base) {
+				const c = await gh.compare(base, head, true);
+				if (c.status === "ahead" || c.status === "diverged") {
+					upstream = { sha: head, ahead: c.ahead, diverged: c.status === "diverged" };
+				}
+			}
+			this.recordUpstream(base, upstream);
+		} catch {
+			// A failed check leaves the last known state. The next one tries again.
+		}
 	}
 
 	async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
@@ -602,8 +693,17 @@ export class ProjectRoom extends DurableObject<Env> {
 			}
 			case "file.move":
 				return this.move(ws, msg.from, msg.to);
+			case "git.check":
+				return this.checkUpstream(user);
+			case "git.preview":
+				try {
+					this.send(ws, { t: "git.preview", preview: await this.preview(user) });
+				} catch (err) {
+					this.send(ws, { t: "git.preview", preview: null, error: describe(err) });
+				}
+				return;
 			case "git.pull":
-				return this.runGit("pull", user, () => this.pull(user));
+				return this.runGit("pull", user, () => this.pull(user, msg.head));
 			case "git.commit":
 				return this.runGit("commit", user, () => this.commit(user, msg.message));
 		}
@@ -796,12 +896,10 @@ export class ProjectRoom extends DurableObject<Env> {
 	 * three ways and written back as a minimal diff, so text nobody touched
 	 * keeps its identity and the comments anchored in it stay put.
 	 */
-	private async pull(user: User): Promise<{ message: string; sha?: string }> {
-		const gh = await this.github(user);
-		const head = await gh.head(this.config.branch);
-		if (head === this.meta("base_sha")) {
-			this.setMeta("last_sync", String(Date.now()));
-			return { message: "Already up to date" };
+	/** The files `head` changes relative to the commit annomate is on, fetched once per head. */
+	private async incoming(gh: GitHub, head: string): Promise<Incoming> {
+		if (this.incomingCache?.head === head && this.incomingCache.base === this.meta("base_sha")) {
+			return this.incomingCache;
 		}
 		const snap = await gh.snapshot(head);
 		const known = new Map(
@@ -812,7 +910,105 @@ export class ProjectRoom extends DurableObject<Env> {
 		);
 		const changed = snap.text.filter((e) => known.get(e.path) !== e.sha);
 		const removed = [...known.keys()].filter((p) => !snap.text.some((e) => e.path === p));
-		const remote = await fetchTexts(gh, changed);
+		const incoming = {
+			base: this.meta("base_sha") ?? "",
+			head,
+			snap,
+			remote: await fetchTexts(gh, changed),
+			removed,
+		};
+		this.incomingCache = incoming;
+		return incoming;
+	}
+
+	/** What pulling the branch's head would do, without doing it. */
+	private async preview(user: User): Promise<PullPreview> {
+		const gh = await this.github(user);
+		const base = this.meta("base_sha") ?? "";
+		const head = await gh.head(this.config.branch);
+		const empty = { base, head, diverged: false, commits: [], more: 0, files: [], comments: [] };
+		if (head === base) return empty;
+		const [compare, { remote, removed }] = await Promise.all([
+			gh.compare(base, head),
+			this.incoming(gh, head),
+		]);
+		if (compare.status === "behind" || compare.status === "identical") return empty;
+		this.recordUpstream(base, {
+			sha: head,
+			ahead: compare.ahead,
+			diverged: compare.status === "diverged",
+		});
+
+		// Text each changed file will hold after the pull, or null where it goes away.
+		const after = new Map<string, { text: string | null; clean: boolean }>();
+		for (const [path, theirs] of remote) {
+			const ours = this.files.get(path)?.toString();
+			after.set(
+				path,
+				ours === undefined
+					? { text: theirs, clean: true }
+					: merge3(this.base.get(path) ?? "", ours, theirs),
+			);
+		}
+		for (const path of removed) {
+			const ours = this.files.get(path)?.toString();
+			const edited = ours !== undefined && ours !== this.base.get(path);
+			after.set(path, { text: edited ? ours : null, clean: true });
+		}
+
+		const files: PullFile[] = compare.files.map((f) => {
+			const ours = this.files.get(f.path)?.toString();
+			const edited = ours !== undefined && ours !== this.base.get(f.path);
+			const merged = after.get(f.path);
+			const local: PullFile["local"] = !edited
+				? "none"
+				: f.status === "removed"
+					? "kept"
+					: merged && !merged.clean
+						? "overlaps"
+						: "merges";
+			return { ...f, local };
+		});
+
+		const comments: PullPreview["comments"] = [];
+		for (const thread of this.threads()) {
+			const merged = after.get(thread.anchor.file);
+			const text = this.files.get(thread.anchor.file);
+			if (thread.resolved || !merged || !text) continue;
+			const ours = text.toString();
+			if (merged.text === ours) continue;
+			const r = resolveAnchor(this.doc, text, thread.anchor);
+			if (r.status === "detached") continue;
+			comments.push({
+				id: thread.id,
+				file: thread.anchor.file,
+				quote: (r.current || thread.anchor.quote).replace(/\s+/g, " ").slice(0, 120),
+				effect:
+					merged.text === null ? "lost" : fate(ours, merged.text, r.from, r.to, thread.anchor),
+			});
+		}
+
+		return {
+			base,
+			head,
+			diverged: compare.status === "diverged",
+			commits: compare.commits,
+			more: Math.max(0, compare.ahead - compare.commits.length),
+			files,
+			comments,
+		};
+	}
+
+	/**
+	 * Bring a reviewed commit's changes into the shared document. Each file is merged three ways
+	 * and written back as a minimal diff, so text nobody touched keeps its identity and the
+	 * comments anchored in it stay put. `head` is the commit the preview showed. A branch that
+	 * moved on since then is pulled no further.
+	 */
+	private async pull(user: User, head: string): Promise<{ message: string; sha?: string }> {
+		if (head === this.meta("base_sha")) return { message: "Already up to date" };
+		const gh = await this.github(user);
+		const { snap, remote, removed } = await this.incoming(gh, head);
 		const conflicts: string[] = [];
 
 		this.doc.transact(() => {
@@ -835,24 +1031,32 @@ export class ProjectRoom extends DurableObject<Env> {
 			this.setAssets(snap);
 		}, "git");
 		this.setBase(snap);
+		this.incomingCache = null;
 		this.reanchor();
+		this.ctx.waitUntil(this.checkUpstream(user, true));
 
 		const count = remote.size + removed.length;
 		const summary = `Pulled ${head.slice(0, 7)}, ${count} file${count === 1 ? "" : "s"} changed`;
 		return {
 			message: conflicts.length
-				? `${summary}. Overlapping edits in ${conflicts.join(", ")}, check them`
+				? `${summary}. Some incoming changes overlapped edits in ${conflicts.join(", ")} and were left out`
 				: summary,
 			sha: head,
 		};
 	}
 
+	/** Refuse to commit over commits nobody here has seen. The count updates for everyone. */
+	private async behind(user: User): Promise<never> {
+		await this.checkUpstream(user, true);
+		const ahead = this.upstream()?.ahead;
+		const what = ahead ? `${ahead} new commit${ahead === 1 ? "" : "s"}` : "new commits";
+		throw new Error(`${this.config.branch} has ${what}. Review and pull them, then commit`);
+	}
+
 	private async commit(user: User, message: string): Promise<{ message: string; sha?: string }> {
 		const gh = await this.github(user);
-		let pulled = "";
-		if ((await gh.head(this.config.branch)) !== this.meta("base_sha")) {
-			pulled = `${(await this.pull(user)).message}. `;
-		}
+		// Others' commits come in only through a pull someone has reviewed, never as a side effect.
+		if ((await gh.head(this.config.branch)) !== this.meta("base_sha")) return this.behind(user);
 
 		const changes = new Map<string, string | { sha: string } | null>();
 		for (const [path, text] of this.files) {
@@ -864,7 +1068,7 @@ export class ProjectRoom extends DurableObject<Env> {
 			if (this.baseAssets.get(path)?.sha !== a.sha) changes.set(path, { sha: a.sha });
 		}
 		for (const path of this.baseAssets.keys()) if (!this.assets.has(path)) changes.set(path, null);
-		if (!changes.size) return { message: `${pulled}Nothing to commit` };
+		if (!changes.size) return { message: "Nothing to commit" };
 
 		const write = () =>
 			gh.commit({
@@ -879,10 +1083,9 @@ export class ProjectRoom extends DurableObject<Env> {
 		try {
 			result = await write();
 		} catch (err) {
-			if (!(err instanceof GitHubError && err.status === 422)) throw err;
-			// The branch moved while we were writing. Merge and try once more.
-			pulled = `${(await this.pull(user)).message}. `;
-			result = await write();
+			// The branch moved while we were writing.
+			if (err instanceof GitHubError && err.status === 422) return this.behind(user);
+			throw err;
 		}
 
 		this.doc.transact(() => {
@@ -901,7 +1104,7 @@ export class ProjectRoom extends DurableObject<Env> {
 		this.setBase(await gh.snapshot(result.sha));
 		const n = changes.size;
 		return {
-			message: `${pulled}Committed ${result.sha.slice(0, 7)}, ${n} file${n === 1 ? "" : "s"}`,
+			message: `Committed ${result.sha.slice(0, 7)}, ${n} file${n === 1 ? "" : "s"}`,
 			sha: result.sha,
 		};
 	}

@@ -66,17 +66,39 @@ export interface CommitDetail extends HistoryCommit {
 	files: CommitFile[];
 }
 
-interface GhCommitDetail extends GhCommit {
-	files?: {
-		filename: string;
-		previous_filename?: string;
-		status: string;
-		additions: number;
-		deletions: number;
-		patch?: string;
-		sha: string | null;
-	}[];
+interface GhFile {
+	filename: string;
+	previous_filename?: string;
+	status: string;
+	additions: number;
+	deletions: number;
+	patch?: string;
+	sha: string | null;
 }
+
+interface GhCommitDetail extends GhCommit {
+	files?: GhFile[];
+}
+
+/** Commits on `head` that `base` lacks, and the combined change to each file. */
+export interface Comparison {
+	/** "ahead" when `head` builds on `base`. "diverged" when history was rewritten. */
+	status: "ahead" | "behind" | "identical" | "diverged";
+	ahead: number;
+	commits: HistoryCommit[];
+	files: CommitFile[];
+}
+
+const toCommitFile = (f: GhFile): CommitFile => ({
+	path: f.filename,
+	previousPath: f.previous_filename ?? null,
+	status: fileStatus(f.status),
+	additions: f.additions,
+	deletions: f.deletions,
+	patch: f.patch ?? null,
+	sha: f.sha,
+	binary: !f.patch && !isTextPath(f.filename),
+});
 
 function toHistoryCommit(c: GhCommit): HistoryCommit {
 	return {
@@ -251,18 +273,25 @@ export class GitHub {
 	/** One commit with its changed files, diffed against its first parent. */
 	async commitDetail(sha: string): Promise<CommitDetail> {
 		const c = await this.call<GhCommitDetail>(`/repos/${this.repo}/commits/${sha}`);
+		return { ...toHistoryCommit(c), files: (c.files ?? []).map(toCommitFile) };
+	}
+
+	/**
+	 * What `head` adds to `base`. GitHub lists up to 250 commits, newest last here as there, and
+	 * diffs up to 300 files. `brief` skips the commit list for a cheap count.
+	 */
+	async compare(base: string, head: string, brief = false): Promise<Comparison> {
+		const c = await this.call<{
+			status: Comparison["status"];
+			ahead_by: number;
+			commits: GhCommit[];
+			files?: GhFile[];
+		}>(`/repos/${this.repo}/compare/${base}...${head}${brief ? "?per_page=1" : ""}`);
 		return {
-			...toHistoryCommit(c),
-			files: (c.files ?? []).map((f) => ({
-				path: f.filename,
-				previousPath: f.previous_filename ?? null,
-				status: fileStatus(f.status),
-				additions: f.additions,
-				deletions: f.deletions,
-				patch: f.patch ?? null,
-				sha: f.sha,
-				binary: !f.patch && !isTextPath(f.filename),
-			})),
+			status: c.status,
+			ahead: c.ahead_by,
+			commits: brief ? [] : c.commits.map(toHistoryCommit).reverse(),
+			files: brief ? [] : (c.files ?? []).map(toCommitFile),
 		};
 	}
 

@@ -10,6 +10,7 @@ import {
 	MSG_AWARENESS,
 	MSG_SYNC,
 	type Presence,
+	type PullPreview,
 	type ServerMessage,
 	type Thread,
 	type User,
@@ -28,6 +29,8 @@ interface Snapshot {
 	me: User | null;
 	threads: Thread[];
 	git: GitState | null;
+	/** The pull preview this tab asked for. Undefined while it loads. */
+	pullPreview: { preview: PullPreview | null; error?: string } | null | undefined;
 	toasts: Toast[];
 }
 
@@ -48,7 +51,14 @@ export class Room {
 	private closed = false;
 	private listeners = new Set<() => void>();
 	private toastId = 0;
-	private state: Snapshot = { status: "connecting", me: null, threads: [], git: null, toasts: [] };
+	private state: Snapshot = {
+		status: "connecting",
+		me: null,
+		threads: [],
+		git: null,
+		pullPreview: null,
+		toasts: [],
+	};
 	/** Copied on every change, because awareness mutates one Map in place. */
 	private presence = new Map<number, Presence>();
 
@@ -158,6 +168,8 @@ export class Room {
 				return this.set({ threads: this.state.threads.filter((t) => t.id !== msg.id) });
 			case "git.state":
 				return this.set({ git: msg.git });
+			case "git.preview":
+				return this.set({ pullPreview: { preview: msg.preview, error: msg.error } });
 			case "git.result": {
 				const who = msg.by.id === this.state.me?.id ? "" : `${msg.by.name}: `;
 				return this.toast(`${who}${msg.message}`, msg.ok ? "ok" : "error");
@@ -175,6 +187,12 @@ export class Room {
 
 	private sendBinary(data: Uint8Array) {
 		if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(data as Uint8Array<ArrayBuffer>);
+	}
+
+	/** Ask the room what a pull would do. The answer lands in `pullPreview`. */
+	previewPull() {
+		this.set({ pullPreview: undefined });
+		this.send({ t: "git.preview" });
 	}
 
 	send(msg: ClientMessage) {
