@@ -109,7 +109,9 @@ test("an agent connects through OAuth and lists its tools", async ({ page }) => 
 			"edit_comment",
 			"get_comments",
 			"get_thread",
+			"list_changes",
 			"list_projects",
+			"read_file",
 			"reply_to_thread",
 			"resolve_thread",
 		]);
@@ -151,6 +153,44 @@ test("a read-only connection cannot reply", async ({ page }) => {
 
 test.describe("with a project", () => {
 	test.skip(!REPO, "Set E2E_REPO=owner/name to a Typst repo the dev token can read");
+
+	test("an agent reads annomate's uncommitted text and its diff", async ({ page }) => {
+		await page.goto("/auth/dev?login=dana&id=9010&name=Dana");
+		await clearProjects(page.request, REPO as string);
+		const created = await page.request.post("/api/projects", { data: { repo: REPO } });
+		expect(created.ok(), await created.text()).toBeTruthy();
+		const project = await created.json();
+		const { access_token } = await connect(page, page.request);
+		const client = await mcp(access_token);
+		const call = async (name: string, args: Record<string, unknown>) =>
+			client.callTool({ name, arguments: { project: REPO as string, ...args } });
+
+		expect(textOf(await call("list_changes", {}))).toContain("Nothing has changed in annomate");
+
+		// An edit nobody has committed.
+		await page.goto(`/p/${project.id}`);
+		await expect(page.locator(".cm-line").first()).toBeVisible({ timeout: 60_000 });
+		await page.locator(".cm-line").first().click();
+		await page.keyboard.press("ControlOrMeta+Home");
+		await page.keyboard.type("// an uncommitted note\n");
+
+		await expect
+			.poll(async () => textOf(await call("read_file", { path: project.mainFile, end_line: 3 })))
+			.toContain("1 | // an uncommitted note");
+		const file = textOf(await call("read_file", { path: project.mainFile, end_line: 3 }));
+		expect(file).toContain("not committed");
+
+		const changes = textOf(await call("list_changes", {}));
+		expect(changes).toContain(`## ${project.mainFile} · modified · +1 -0`);
+		expect(changes).toContain("+// an uncommitted note");
+
+		const missing = await call("read_file", { path: "nope.typ" });
+		expect(missing.isError).toBe(true);
+		expect(textOf(missing)).toContain(project.mainFile);
+
+		await client.close();
+		expect((await page.request.delete(`/api/projects/${project.id}`)).ok()).toBeTruthy();
+	});
 
 	test("an agent reads a comment in context, replies and resolves it, live", async ({ page }) => {
 		await page.goto("/auth/dev?login=dana&id=9010&name=Dana");

@@ -13,6 +13,7 @@ import {
 	resolveAnchor,
 } from "../shared/anchor";
 import { buildReport, type Report, type ReportOptions } from "../shared/commentReport";
+import { type LocalPatch, localPatch } from "../shared/localPatch";
 import { locatePassage } from "../shared/locate";
 import {
 	type ClientMessage,
@@ -27,6 +28,12 @@ import {
 import { userToken } from "./auth";
 import type { Env } from "./env";
 import { GitHub, GitHubError, type Snapshot } from "./github";
+
+export interface LocalChange extends LocalPatch {
+	path: string;
+	status: "added" | "modified" | "removed";
+	binary: boolean;
+}
 
 export interface ProjectConfig {
 	id: string;
@@ -269,6 +276,90 @@ export class ProjectRoom extends DurableObject<Env> {
 		);
 		this.publish(threadId);
 		return this.thread(threadId);
+	}
+
+	/** A file as annomate holds it now, edits not yet committed included. */
+	async agentReadFile(
+		user: User,
+		config: ProjectConfig,
+		path: string,
+	): Promise<{ text: string; changed: boolean } | { error: string }> {
+		await this.prepare(user, config);
+		const text = this.files.get(path);
+		if (text) {
+			const content = text.toString();
+			return { text: content, changed: this.base.get(path) !== content };
+		}
+		const asset = this.assets.get(path);
+		if (asset) {
+			return {
+				error: `${path} is a binary file (${asset.size} bytes). Read it from your checkout.`,
+			};
+		}
+		const all = [...this.files.keys(), ...this.assets.keys()].sort();
+		const name = path.split("/").pop()?.toLowerCase() ?? "";
+		const near = all.filter(
+			(p) => p.toLowerCase().endsWith(name) || p.toLowerCase().includes(name),
+		);
+		const list = (near.length ? near : all).slice(0, 40);
+		return {
+			error: `No ${path} in ${this.config.repo}. ${near.length ? "Did you mean" : "Its files"}:\n${list.map((p) => `- ${p}`).join("\n")}`,
+		};
+	}
+
+	/** Every file that differs from the last commit annomate synced with. */
+	async agentChanges(
+		user: User,
+		config: ProjectConfig,
+	): Promise<{ commit: string; files: LocalChange[] }> {
+		await this.prepare(user, config);
+		const files: LocalChange[] = [];
+		for (const [path, text] of this.files) {
+			const before = this.base.get(path);
+			const after = text.toString();
+			if (before === after) continue;
+			const diff = localPatch(before ?? "", after);
+			files.push({
+				path,
+				status: before === undefined ? "added" : "modified",
+				binary: false,
+				...diff,
+			});
+		}
+		for (const path of this.base.keys()) {
+			if (this.files.has(path)) continue;
+			files.push({
+				path,
+				status: "removed",
+				binary: false,
+				...localPatch(this.base.get(path) ?? "", ""),
+			});
+		}
+		for (const [path, { sha }] of this.assets) {
+			const before = this.baseAssets.get(path);
+			if (before?.sha === sha) continue;
+			files.push({
+				path,
+				status: before ? "modified" : "added",
+				binary: true,
+				patch: null,
+				additions: 0,
+				deletions: 0,
+			});
+		}
+		for (const path of this.baseAssets.keys()) {
+			if (!this.assets.has(path))
+				files.push({
+					path,
+					status: "removed",
+					binary: true,
+					patch: null,
+					additions: 0,
+					deletions: 0,
+				});
+		}
+		files.sort((a, b) => a.path.localeCompare(b.path));
+		return { commit: this.meta("base_sha") ?? "", files };
 	}
 
 	private async prepare(user: User, config: ProjectConfig) {

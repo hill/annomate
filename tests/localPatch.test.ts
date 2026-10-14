@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { localPatch } from "../src/app/localPatch";
+import { localPatch } from "../shared/localPatch";
 import { parsePatch } from "../src/history/diff";
 
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join("\n");

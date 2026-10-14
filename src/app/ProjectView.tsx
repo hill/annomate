@@ -17,6 +17,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as Y from "yjs";
 import { applyMinimalDiff, createAnchor, type Resolved, resolveAnchor } from "../../shared/anchor";
+import { localPatch } from "../../shared/localPatch";
 import { isTextPath, type Presence, type User } from "../../shared/protocol";
 import { ApiError, api, type CommitFile, type Member, type Project, signIn } from "../api";
 import { type Draft, Rail } from "../comments/Rail";
@@ -33,7 +34,6 @@ import { navigate } from "../router";
 import { Drawer } from "../ui/Drawer";
 import { GithubMark, githubUrl } from "../ui/GithubMark";
 import { FileTree, joinPath, KEEP, parentOf, type Upload } from "./FileTree";
-import { localPatch } from "./localPatch";
 import { Wordmark } from "./Mark";
 import { GeneratedIcon, iconFromFile, ProjectIcon } from "./ProjectIcon";
 import {

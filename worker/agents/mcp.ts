@@ -20,7 +20,13 @@ To correct a message you or your person wrote, call edit_comment with its messag
 
 To review a document yourself, call create_thread for each point. Quote the passage you mean, as it appears in the file, and add its line when the same words appear more than once. The comment appears in annomate at once, under the person's name, marked as yours.
 
+People also edit in annomate without committing. list_changes shows what differs from the commit annomate last synced with, and read_file gives a file as annomate holds it now. Use them when a comment refers to text your checkout does not have.
+
 annomate does not see your local edits. Push your commits to the project's branch, then someone pulls them in annomate.`;
+
+// Keeps one tool result to a size an agent can take in. Larger files are read in ranges.
+const MAX_LINES = 2000;
+const MAX_DIFF_LINES = 400;
 
 const project = z
 	.string()
@@ -125,6 +131,101 @@ function server(agent: Agent): McpServer {
 				const r = await room(agent.env, p.id).report(agent.user, roomConfig(p), options);
 				if (!r.threads.length) return failure(`No thread \`${thread_id}\` in ${p.repo}.`);
 				return text(reportMarkdown(r, options));
+			}),
+	);
+
+	mcp.registerTool(
+		"read_file",
+		{
+			title: "Read file",
+			description:
+				"A file's text as annomate holds it now, including edits not yet committed. Lines are numbered as get_comments numbers them. Long files come back in ranges.",
+			inputSchema: z.object({
+				project,
+				path: z.string().describe("The file path in the repo, e.g. chapters/intro.typ."),
+				start_line: z.number().int().min(1).optional().describe("First line to return, 1-based."),
+				end_line: z.number().int().min(1).optional().describe("Last line to return, inclusive."),
+			}),
+			annotations: { readOnlyHint: true, openWorldHint: false },
+		},
+		async ({ project, path, start_line, end_line }) =>
+			withProject(agent, project, async (p) => {
+				const file = await room(agent.env, p.id).agentReadFile(
+					agent.user,
+					roomConfig(p),
+					path.replace(/^\/+/, ""),
+				);
+				if ("error" in file) return failure(file.error);
+				const lines = file.text.split("\n");
+				const first = Math.min(start_line ?? 1, lines.length);
+				const last = Math.min(
+					end_line ?? first + MAX_LINES - 1,
+					first + MAX_LINES - 1,
+					lines.length,
+				);
+				const width = String(last).length;
+				const body = lines
+					.slice(first - 1, last)
+					.map((line, i) => `${String(first + i).padStart(width)} | ${line}`)
+					.join("\n");
+				const fence = fenceFor(body);
+				const facts = [
+					`${path}, lines ${first}-${last} of ${lines.length}.`,
+					file.changed
+						? "It has edits in annomate that are not committed, so it differs from your checkout."
+						: "It matches the last synced commit.",
+					last < lines.length ? `Pass start_line: ${last + 1} for more.` : "",
+				];
+				return text(`${facts.filter(Boolean).join(" ")}\n\n${fence}\n${body}\n${fence}`);
+			}),
+	);
+
+	mcp.registerTool(
+		"list_changes",
+		{
+			title: "List changes",
+			description:
+				"Every file people have changed in annomate since the last synced commit, with a unified diff for each text file. These edits are not in your checkout yet.",
+			inputSchema: z.object({
+				project,
+				path: z.string().optional().describe("Only this file."),
+			}),
+			annotations: { readOnlyHint: true, openWorldHint: false },
+		},
+		async ({ project, path }) =>
+			withProject(agent, project, async (p) => {
+				const { commit, files } = await room(agent.env, p.id).agentChanges(
+					agent.user,
+					roomConfig(p),
+				);
+				const short = commit.slice(0, 7);
+				const picked = path ? files.filter((f) => f.path === path.replace(/^\/+/, "")) : files;
+				if (!picked.length) {
+					return text(
+						path
+							? `${path} has no changes in annomate since \`${short}\`.`
+							: `Nothing has changed in annomate since \`${short}\`. Its text matches that commit.`,
+					);
+				}
+				const out = [
+					`${picked.length} file${picked.length === 1 ? "" : "s"} changed in annomate since \`${short}\` on ${p.branch}.`,
+				];
+				for (const f of picked) {
+					const counts = f.binary ? "binary" : `+${f.additions} -${f.deletions}`;
+					out.push("", `## ${f.path} · ${f.status} · ${counts}`);
+					if (!f.patch) continue;
+					const lines = f.patch.split("\n");
+					const shown = lines.slice(0, MAX_DIFF_LINES).join("\n");
+					const fence = fenceFor(shown);
+					out.push("", `${fence}diff`, shown, fence);
+					if (lines.length > MAX_DIFF_LINES) {
+						out.push(
+							"",
+							`${lines.length - MAX_DIFF_LINES} more diff lines. Call read_file for the whole file.`,
+						);
+					}
+				}
+				return text(out.join("\n"));
 			}),
 	);
 
@@ -315,6 +416,12 @@ function writable(agent: Agent): CallToolResult | undefined {
 	return failure(
 		"This connection can read comments but not write them. Reconnect annomate and allow writing comments to change that.",
 	);
+}
+
+/** A code fence longer than any run of backticks inside it, so the content cannot close it. */
+function fenceFor(content: string): string {
+	const longest = Math.max(0, ...(content.match(/`+/g) ?? []).map((run) => run.length));
+	return "`".repeat(Math.max(3, longest + 1));
 }
 
 const text = (body: string): CallToolResult => ({ content: [{ type: "text", text: body }] });

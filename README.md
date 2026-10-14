@@ -32,7 +32,7 @@ See where everyone is typing in the source and pointing on the page, and follow 
 
 ## Coding agents
 
-Claude Code, Codex, Cursor and other MCP clients can read, add, edit, reply to and resolve comments. Ask your agent to work through a review, and it fixes the text in your checkout and answers each thread. For Claude Code:
+Claude Code, Codex, Cursor and other MCP clients can read, add, edit, reply to and resolve comments. Ask your agent to work through a review, and it fixes the text in your checkout and answers each thread. They can also read files as annomate holds them and list edits not yet committed, so a comment on uncommitted text still makes sense to them. For Claude Code:
 
 ```sh
 claude mcp add --transport http annomate https://annomate.hill.xyz/mcp
