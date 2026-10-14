@@ -51,6 +51,7 @@ export class Room {
 	private closed = false;
 	private listeners = new Set<() => void>();
 	private toastId = 0;
+	private pending: string[] = [];
 	private state: Snapshot = {
 		status: "connecting",
 		me: null,
@@ -112,6 +113,7 @@ export class Room {
 				);
 				ws.send(encoding.toUint8Array(aw));
 			}
+			for (const msg of this.pending.splice(0)) ws.send(msg);
 		};
 
 		ws.onmessage = (event) => {
@@ -195,9 +197,11 @@ export class Room {
 		this.send({ t: "git.preview" });
 	}
 
+	/** Messages sent while connecting go out, in order, once the socket opens. */
 	send(msg: ClientMessage) {
-		if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
-		else this.toast("Offline. Reconnecting first", "error");
+		const data = JSON.stringify(msg);
+		if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(data);
+		else this.pending.push(data);
 	}
 
 	setPresence(patch: Partial<Presence>) {

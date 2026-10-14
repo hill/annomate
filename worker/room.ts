@@ -32,7 +32,7 @@ import {
 } from "../shared/protocol";
 import { userToken } from "./auth";
 import type { Env } from "./env";
-import { GitHub, GitHubError, type Snapshot } from "./github";
+import { GitHub, GitHubError, type Snapshot, type TreeEntry } from "./github";
 
 export interface LocalChange extends LocalPatch {
 	path: string;
@@ -65,6 +65,9 @@ interface Incoming {
 	base: string;
 	head: string;
 	snap: Snapshot;
+	/** Text files the commit changed. */
+	changed: TreeEntry[];
+	/** Their new text, for those fetched so far. */
 	remote: Map<string, string>;
 	removed: string[];
 }
@@ -897,10 +900,27 @@ export class ProjectRoom extends DurableObject<Env> {
 	 * keeps its identity and the comments anchored in it stay put.
 	 */
 	/** The files `head` changes relative to the commit annomate is on, fetched once per head. */
-	private async incoming(gh: GitHub, head: string): Promise<Incoming> {
-		if (this.incomingCache?.head === head && this.incomingCache.base === this.meta("base_sha")) {
-			return this.incomingCache;
-		}
+	/**
+	 * The files `head` changes relative to the commit annomate is on. Only the new text of paths
+	 * `wanted` accepts is fetched. A preview needs few, a pull all, and both share one cache.
+	 */
+	private async incoming(
+		gh: GitHub,
+		head: string,
+		wanted: (path: string) => boolean = () => true,
+	): Promise<Incoming> {
+		const cached =
+			this.incomingCache?.head === head && this.incomingCache.base === this.meta("base_sha")
+				? this.incomingCache
+				: null;
+		const incoming = cached ?? (await this.listIncoming(gh, head));
+		const missing = incoming.changed.filter((e) => wanted(e.path) && !incoming.remote.has(e.path));
+		for (const [path, text] of await fetchTexts(gh, missing)) incoming.remote.set(path, text);
+		this.incomingCache = incoming;
+		return incoming;
+	}
+
+	private async listIncoming(gh: GitHub, head: string): Promise<Incoming> {
 		const snap = await gh.snapshot(head);
 		const known = new Map(
 			this.sql
@@ -910,15 +930,7 @@ export class ProjectRoom extends DurableObject<Env> {
 		);
 		const changed = snap.text.filter((e) => known.get(e.path) !== e.sha);
 		const removed = [...known.keys()].filter((p) => !snap.text.some((e) => e.path === p));
-		const incoming = {
-			base: this.meta("base_sha") ?? "",
-			head,
-			snap,
-			remote: await fetchTexts(gh, changed),
-			removed,
-		};
-		this.incomingCache = incoming;
-		return incoming;
+		return { base: this.meta("base_sha") ?? "", head, snap, changed, remote: new Map(), removed };
 	}
 
 	/** What pulling the branch's head would do, without doing it. */
@@ -928,9 +940,17 @@ export class ProjectRoom extends DurableObject<Env> {
 		const head = await gh.head(this.config.branch);
 		const empty = { base, head, diverged: false, commits: [], more: 0, files: [], comments: [] };
 		if (head === base) return empty;
+		// Only files with edits here or open comments can show an effect beyond their diff.
+		const commented = new Set(
+			this.threads()
+				.filter((t) => !t.resolved)
+				.map((t) => t.anchor.file),
+		);
+		const relevant = (path: string) =>
+			commented.has(path) || this.files.get(path)?.toString() !== this.base.get(path);
 		const [compare, { remote, removed }] = await Promise.all([
 			gh.compare(base, head),
-			this.incoming(gh, head),
+			this.incoming(gh, head, relevant),
 		]);
 		if (compare.status === "behind" || compare.status === "identical") return empty;
 		this.recordUpstream(base, {
