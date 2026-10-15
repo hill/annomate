@@ -4,6 +4,7 @@ import {
 	type Anchor,
 	applyMinimalDiff,
 	createAnchor,
+	diff,
 	inlineDiff,
 	merge3,
 	reattach,
@@ -255,5 +256,31 @@ describe("point anchors", () => {
 		const r = resolveAnchor(doc, text, anchor);
 		const fixed = reattach(text, anchor, r);
 		expect(fixed.start).toBe(fixed.end);
+	});
+});
+
+describe("diff on large files", () => {
+	// A regenerated data file: every number on every line changes. Unbounded, the character diff
+	// of this runs for seconds, and a Worker cannot stop it early.
+	const rows = (seed: number) =>
+		Array.from({ length: 2000 }, (_, i) => `  {"x": ${i}, "y": ${((i * seed) % 997) / 7}},`).join(
+			"\n",
+		);
+
+	test("applies exactly, in bounded time", () => {
+		const before = rows(31);
+		const after = rows(53);
+		const doc = new Y.Doc();
+		const text = doc.getText("t");
+		text.insert(0, before);
+		const started = performance.now();
+		applyMinimalDiff(text, after);
+		expect(text.toString()).toBe(after);
+		expect(performance.now() - started).toBeLessThan(2000);
+	});
+
+	test("still finds the changed words inside a small edit", () => {
+		const changes = diff("one two three\nfour five\n", "one two three\nfour six\n");
+		expect(changes.filter(([op]) => op !== 0).map(([, t]) => t)).toEqual(["five", "six"]);
 	});
 });

@@ -41,6 +41,50 @@ export interface Resolved {
 }
 
 const dmp = new DiffMatchPatch();
+// diff-match-patch bounds its work with a clock, and a Worker's clock stands still while code
+// runs, so the bound never fires there. `diff` bounds the work by size instead.
+dmp.Diff_Timeout = 0;
+
+/** Blocks of changed lines up to this many characters a side are refined to characters. */
+const REFINE_MAX = 4000;
+
+/**
+ * A character diff from `a` to `b` whose cost grows with the changed lines, not the file. Lines
+ * are diffed first. Each replaced block is then diffed by character when it is small enough to
+ * be quick; a larger one stays a whole-block replacement.
+ */
+export function diff(a: string, b: string): DiffMatchPatch.Diff[] {
+	if (a === b) return a ? [[DiffMatchPatch.DIFF_EQUAL, a]] : [];
+	const { chars1, chars2, lineArray } = dmp.diff_linesToChars_(a, b);
+	const lines = dmp.diff_main(chars1, chars2, false);
+	dmp.diff_charsToLines_(lines, lineArray);
+
+	const out: DiffMatchPatch.Diff[] = [];
+	let removed = "";
+	let added = "";
+	const flush = () => {
+		if (removed && added && removed.length <= REFINE_MAX && added.length <= REFINE_MAX) {
+			const refined = dmp.diff_main(removed, added, false);
+			dmp.diff_cleanupSemantic(refined);
+			out.push(...refined);
+		} else {
+			if (removed) out.push([DiffMatchPatch.DIFF_DELETE, removed]);
+			if (added) out.push([DiffMatchPatch.DIFF_INSERT, added]);
+		}
+		removed = "";
+		added = "";
+	};
+	for (const [op, text] of lines) {
+		if (op === DiffMatchPatch.DIFF_DELETE) removed += text;
+		else if (op === DiffMatchPatch.DIFF_INSERT) added += text;
+		else {
+			flush();
+			out.push([op, text]);
+		}
+	}
+	flush();
+	return out;
+}
 
 const encode = (bytes: Uint8Array) => {
 	let s = "";
@@ -109,7 +153,7 @@ export function similarity(a: string, b: string): number {
 	if (a === b) return 1;
 	const longest = Math.max(a.length, b.length);
 	if (longest === 0) return 1;
-	return 1 - dmp.diff_levenshtein(dmp.diff_main(a, b)) / longest;
+	return 1 - dmp.diff_levenshtein(diff(a, b)) / longest;
 }
 
 function commonSuffix(a: string, b: string): number {
@@ -290,8 +334,7 @@ export function reattach(text: Y.Text, anchor: Anchor, resolved: Resolved): Anch
 export function applyMinimalDiff(text: Y.Text, next: string) {
 	const current = text.toString();
 	if (current === next) return;
-	const diffs = dmp.diff_main(current, next);
-	dmp.diff_cleanupSemantic(diffs);
+	const diffs = diff(current, next);
 	let index = 0;
 	for (const [op, chunk] of diffs) {
 		if (op === DiffMatchPatch.DIFF_EQUAL) index += chunk.length;
@@ -314,7 +357,7 @@ export function merge3(
 ): { text: string; clean: boolean } {
 	if (ours === base) return { text: theirs, clean: true };
 	if (theirs === base || theirs === ours) return { text: ours, clean: true };
-	const patches = dmp.patch_make(base, theirs);
+	const patches = dmp.patch_make(base, diff(base, theirs));
 	const [text, applied] = dmp.patch_apply(patches, ours);
 	return { text, clean: applied.every(Boolean) };
 }
